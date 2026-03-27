@@ -374,6 +374,37 @@ Optional at `Configs/workshop_map.json`. Maps mod names to Workshop IDs for use 
 **Inherited Toolkit Features**
 - The portable edition still includes the existing server control, workshop sync, backups, monitoring, diagnostics, and interactive menu system from the current tModLoader server toolkit.
 
+### v2.5.0 — 2026-03-01
+
+Inherited from the original `tmodloaderserver` line before the portable fork became the public repo.
+
+**Menu & UX**
+- Removed obsolete Download Mods and Sync Mods menu items — superseded by URL→`enabled.json` system
+- Restructured all 5 menu pages for better headless-server UX flow
+- Monitoring page expanded from 4 to 8 items: Status Dashboard, Health Check, Live Monitor, Follow Server Log (`tail -f`), View Server/Monitor/Control Logs, Attach to Server Console (`screen -r`)
+- Backup page expanded from 4 to 10 items: inline restore and verify file pickers, config/full/auto backups, cleanup, log view
+- Mods page: added Mod Configs editor (item 14) — browses `ModConfigs/` and mod subdirs, opens selected file in `nano`
+- Server page: added Import World (item 8) — copy a pre-uploaded `.wld`, rename, set active, optionally start
+
+**Logging**
+- `log_it` and `log_control` now write to file only by default — no terminal noise for INFO messages
+- WARN / ERROR / CRITICAL always print to terminal
+- `--debug` flag exports `TMOD_DEBUG=1` to all child scripts, enabling full verbose output
+
+**Configuration**
+- Directories renamed to match tModLoader convention: `Engine/`, `Configs/`, `Logs/`, `Backups/`, `Scripts/`
+- Backup subdirectories capitalised: `Backups/Worlds/`, `Backups/Configs/`, `Backups/Full/`
+- `STEAMCMD_PATH` moved from `.env` to `serverconfig.txt` (`steamcmd_path=`)
+- Log rotation thresholds now configurable in `serverconfig.txt` (`log_max_size`, `log_keep_days`)
+- `rotate_logs()` improved: timestamped rolling archives, `worldgen.log` excluded
+- `server_config_get()` helper added to core for reading script settings from `serverconfig.txt`
+
+**Cleanup**
+- Whitelist system removed — player management is better handled by in-game admin mods
+- `*.bak` files excluded from git
+- `Scripts/steam/mod_ids.txt` now gitignored (personal mod list); `mod_ids.example.txt` added as tracked template
+- `create_example_mod_ids_file()` copies from `mod_ids.example.txt` when bootstrapping a fresh install
+
 ---
 
 ## 🤝 Contributing
