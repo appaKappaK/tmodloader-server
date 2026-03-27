@@ -1,7 +1,7 @@
 # tmodloader-server
 
 ![CI](https://github.com/appaKappaK/tmodloader-server/actions/workflows/ci.yml/badge.svg)
-![Version](https://img.shields.io/badge/version-2.5.2-blue)
+![Version](https://img.shields.io/badge/version-2.6.0-blue)
 ![tModLoader](https://img.shields.io/badge/tModLoader-2024.5+-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Linux-orange)
@@ -20,7 +20,9 @@ This edition is built around a self-contained project layout: the server engine,
 
 ## Feature Summary
 
-- Interactive CLI hub for server lifecycle, mods, monitoring, backups, and maintenance, with `dialog`/`fzf` enhancements and plain-Bash fallback
+- Persistent Go TUI with section overview, live server snapshot, log tail, and in-app command output
+- Shell hub preserved as a CLI backend and legacy fallback for users who still want menu-driven Bash
+- Live host and process metrics for PID, players, mods, backups, CPU, memory, uptime, disk activity, and temperature
 - Repo-local layout with `Engine/`, `Mods/`, `Worlds/`, `Logs/`, `Backups/`, and `Tools/SteamCMD/`
 - Engine bootstrap via official GitHub release or SteamCMD
 - Steam Workshop tooling for mod download, sync, archive, and cleanup
@@ -35,7 +37,7 @@ This edition is built around a self-contained project layout: the server engine,
 2. Run `make setup`.
 3. Optionally run `make steamcmd-local`.
 4. Install tModLoader server files into `Engine/`.
-5. Start the control hub.
+5. Start the persistent control room.
 
 ### 1. Install Packages
 
@@ -43,13 +45,13 @@ Debian / Ubuntu:
 
 ```bash
 sudo apt update -y
-sudo apt install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix fzf dialog
+sudo apt install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix fzf dialog golang
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix fzf dialog
+sudo dnf install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix fzf dialog golang
 ```
 
 ### 2. Bootstrap the Project
@@ -99,16 +101,22 @@ Notes:
 
 After a successful install, `Engine/` should contain the tModLoader binaries, `tModLoader.dll`, `tModLoader.runtimeconfig.json`, and `start-tModLoaderServer.sh`.
 
-### 5. Launch the Toolkit
+### 5. Launch the Persistent TUI
 
 ```bash
-bash Scripts/hub/tmod-control.sh
+make tui-run
 ```
 
 For verbose terminal logging:
 
 ```bash
-bash Scripts/hub/tmod-control.sh --debug
+TMOD_DEBUG=1 make tui-run
+```
+
+Shell entrypoint that now prefers the Go control room:
+
+```bash
+bash Scripts/hub/tmod-control.sh
 ```
 
 ## Project Layout
@@ -139,19 +147,47 @@ Everything above is expected to live inside the project by default. That is the 
 
 ## Common Workflows
 
-### Run the Interactive Hub
+### Run the Persistent TUI
+
+```bash
+make tui-run
+```
+
+This is the new primary interface. It keeps the screen alive while commands run, streams backend script output inside the app, refreshes server status in place, and lets you cycle through the project log files without dropping back to raw shell output.
+
+The default landing view is a section overview, so you drill into `Server`, `Workshop`, `Backup`, `Monitor`, `Diagnostics`, or `Maintenance` instead of starting on one long action list. The right side of the UI stays anchored around a selected-section/action panel, a live `Server Snapshot`, and a lower pane for log tails or command output.
+
+The shell entrypoint now prefers the same control room when it can find a built `bin/tmodloader-ui` or a local Go toolchain:
 
 ```bash
 bash Scripts/hub/tmod-control.sh
 ```
 
-The default interactive UI is a filterable command palette that works over a plain SSH terminal. If you prefer the old numbered layout, you can still open it with:
+Useful keys:
+
+- `Enter`: open the selected section or run the selected action
+- `r`: refresh status and the current log view
+- `l`: cycle between `server.log`, `control.log`, `workshop.log`, `backup.log`, `monitor.log`, and `diagnostics.log`
+- `Tab`: switch between log-tail view and command-output view
+- `Shift+Left` / `Shift+Right`: horizontal scroll in the lower pane when output is wider than the window
+- `Esc`: return to the section overview from a category page
+- Mouse wheel: move one item at a time in the current list
+- `q`: quit when idle
+- `Ctrl+C`: force quit immediately
+
+### Run the Legacy Shell Fallback
 
 ```bash
 bash Scripts/hub/tmod-control.sh interactive classic
 ```
 
-When available, the hub uses `fzf` for searchable pickers and `dialog` for boxed menus and log viewers. You can force a mode with `TMOD_UI_MODE=dialog`, `TMOD_UI_MODE=fzf`, or `TMOD_UI_MODE=plain`.
+If you want the older searchable shell palette instead of the Go TUI, force the legacy path:
+
+```bash
+TMOD_FORCE_LEGACY_UI=1 bash Scripts/hub/tmod-control.sh interactive
+```
+
+When available, the legacy hub uses `fzf` for searchable pickers and `dialog` for boxed menus and log viewers. You can force a legacy shell mode with `TMOD_UI_MODE=dialog`, `TMOD_UI_MODE=fzf`, or `TMOD_UI_MODE=plain`.
 
 Main areas exposed through the palette:
 
@@ -276,10 +312,30 @@ The repo is set up so that runtime data stays local. `.gitignore` already exclud
 - `Configs/serverconfig.txt`
 - `Scripts/env.sh`
 - `Scripts/steam/mod_ids.txt`
+- `bin/`, `coverage.out`, `*.coverprofile`, and `*.test`
+- `Testing/local/`, `Testing/output/`, and `Testing/tmp/`
 
 That keeps the public repo clean while still letting the project behave like a complete local server workspace.
 
 ## Changelog
+
+### v2.6.0 — 2026-03-27
+
+**Persistent Go TUI**
+- Added a Bubble Tea-based headless server console that keeps the screen alive while backend actions run.
+- Replaced the old catch-all landing list with a section overview, native section pages, and a broader set of shell-backed admin actions.
+- Added `make tui-run` and `make tui-build` so the Go UI is easy to launch from source or build into `bin/tmodloader-ui`.
+- Made `bash Scripts/hub/tmod-control.sh` prefer the Go TUI for interactive launches, while keeping `interactive classic` and `TMOD_FORCE_LEGACY_UI=1` for the legacy shell UI.
+
+**Observability & Layout**
+- Added a live `Server Snapshot` with running state, PID, world, players, mod and backup counts, CPU, RSS memory, uptime, disk activity, and host temperature.
+- Kept log tails and command output inside the app so server actions no longer dump you back into raw shell output.
+- Tightened pane layout, empty states, mouse-wheel handling, and overview/action previews so the interface behaves more like a persistent SSH console than a shell launcher.
+- Hardened status polling so offline states do not flicker or report bogus PID, memory, or uptime values.
+
+**Compatibility**
+- The Bash control hub remains available as a legacy fallback and backend command surface.
+- Existing script-driven workflows continue to work through the same `tmod-control.sh`, backup, workshop, diagnostics, and monitor commands.
 
 ### v2.5.2 — 2026-03-27
 
@@ -341,7 +397,7 @@ Inherited from the original `tmodloaderserver` line before the portable fork bec
 
 ## Releases
 
-No GitHub release is published yet, but the current documented state of the public portable edition is `v2.5.2`.
+No GitHub release is published yet, but the current documented state of the public portable edition is `v2.6.0`.
 
 ## Contributing
 

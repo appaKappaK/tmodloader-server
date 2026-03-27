@@ -1,4 +1,4 @@
-.TH TMOD\-CONTROL 1 "2026-03-02" "v2.5.0" "tModLoader Server Management"
+.TH TMOD\-CONTROL 1 "2026-03-27" "v2.6.0" "tModLoader Server Management"
 .SH NAME
 tmod\-control \- headless tModLoader dedicated server management toolkit
 .SH SYNOPSIS
@@ -10,8 +10,9 @@ tmod\-control \- headless tModLoader dedicated server management toolkit
 .SH DESCRIPTION
 .B tmod\-control.sh
 is the central entry point for managing a headless tModLoader dedicated server.
-With no arguments it launches an interactive menu. Commands can also be passed
-directly for scripting or automation.
+With no arguments it prefers the persistent Go TUI when a built binary or local
+Go toolchain is available. Otherwise it falls back to the legacy shell menu.
+Commands can also be passed directly for scripting or automation.
 .PP
 All child scripts (backup, workshop, monitor, diagnostics) are invoked through
 this hub and inherit any flags set here.
@@ -143,7 +144,16 @@ Run routine maintenance tasks (log rotation, backup cleanup).
 Emergency shutdown — kills the server screen session immediately.
 .TP
 .B interactive
-Launch the full interactive menu (default when no arguments given).
+Launch the Go control room when available, otherwise the legacy shell palette.
+.TP
+.B interactive classic
+Force the classic numbered shell menu.
+.TP
+.B interactive palette
+Force the searchable legacy shell palette.
+.TP
+.B tui
+Force the Go control room.
 .SH FILES
 .TP
 .I Configs/serverconfig.txt
@@ -188,6 +198,13 @@ to enable verbose terminal output across all scripts. Equivalent to passing
 to
 .BR tmod\-control.sh .
 .TP
+.B TMOD_FORCE_LEGACY_UI
+Set to
+.B 1
+to force the old shell interface for
+.B interactive
+requests even if the Go TUI is available.
+.TP
 .B STEAM_USERNAME
 Steam account username for Workshop downloads requiring login. Should be
 exported from
@@ -202,8 +219,11 @@ Should be exported from
 or equivalent.
 .SH EXAMPLES
 .TP
-Open the interactive menu:
+Open the persistent server console:
 .B ./Scripts/hub/tmod-control.sh
+.TP
+Open the classic shell fallback explicitly:
+.B ./Scripts/hub/tmod-control.sh interactive classic
 .TP
 Start the server with verbose output:
 .B ./Scripts/hub/tmod-control.sh \-\-debug start
@@ -227,7 +247,7 @@ Run diagnostics:
 .BR bash (1)
 .PP
 Project repository:
-.I https://github.com/appaKappaK/tmodloaderserver
+.I https://github.com/appaKappaK/tmodloader-server
 .SH AUTHOR
 appaKappaK
 .SH LICENSE

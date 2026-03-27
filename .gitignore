@@ -13,12 +13,16 @@
 /Scripts/env.sh
 /Scripts/steam/mod_ids.txt
 
-# Local testing workspace
+# Local testing workspace and build output
 /Testing/local/
 /Testing/output/
 /Testing/tmp/
 /Testing/*.log
 /Testing/*.tmp
+/bin/
+coverage.out
+*.coverprofile
+*.test
 
 # Temporary and backup files
 *.bak

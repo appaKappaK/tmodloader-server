@@ -199,7 +199,7 @@ get_server_pid() {
     local config_path="$BASE_DIR/Configs/serverconfig.txt"
     local pid
 
-    pid=$(pgrep -f -- "-config $config_path" | head -n1 || true)
+    pid=$(pgrep -f -- "-config $config_path" | sort -n | head -n1 || true)
     if [[ -n "$pid" ]]; then
         echo "$pid"
         return 0
@@ -222,18 +222,153 @@ get_server_info() {
     local pid
     pid=$(get_server_pid)
     [[ -z "$pid" ]] && { echo "not_running"; return 1; }
-    
-    # Read CPU and memory into separate variables
-    local cpu mem
-    read -r cpu mem < <(ps -p "$pid" -o %cpu,%mem --no-headers 2>/dev/null || echo "0.0 0.0")
-    
-    # Calculate uptime
-    local uptime_sec
-    uptime_sec=$(($(date +%s) - $(stat -c %Y "/proc/$pid" 2>/dev/null || echo 0)))
-    local uptime_min
-    uptime_min=$((uptime_sec / 60))
-    
+
+    local cpu mem etimes uptime_min
+    read -r cpu mem etimes < <(ps -p "$pid" -o %cpu=,%mem=,etimes= --no-headers 2>/dev/null || echo "0.0 0.0 0")
+    [[ -z "$cpu" ]] && cpu="0.0"
+    [[ -z "$mem" ]] && mem="0.0"
+    [[ -z "$etimes" ]] && etimes="0"
+
+    uptime_min=$((etimes / 60))
+
     echo "$cpu $mem $uptime_min"
+}
+
+read_temp_from_thermal_zones() {
+    local want="$1"
+    local zone type raw
+
+    shopt -s nullglob
+    for zone in /sys/class/thermal/thermal_zone*; do
+        [[ -r "$zone/type" && -r "$zone/temp" ]] || continue
+
+        type="$(tr '[:upper:]' '[:lower:]' < "$zone/type" 2>/dev/null)"
+        raw="$(cat "$zone/temp" 2>/dev/null)" || continue
+        [[ "$raw" =~ ^-?[0-9]+$ ]] || continue
+        (( raw > 0 )) || continue
+
+        case "$want:$type" in
+            cpu:*x86_pkg_temp*|cpu:*cpu*|cpu:*package*|cpu:*tctl*|cpu:*coretemp*|cpu:*k10temp*|cpu:*soc_thermal*)
+                echo "$((raw / 1000))C"
+                shopt -u nullglob
+                return 0
+                ;;
+            gpu:*gpu*|gpu:*amdgpu*|gpu:*radeon*|gpu:*graphics*)
+                echo "$((raw / 1000))C"
+                shopt -u nullglob
+                return 0
+                ;;
+            ram:*dimm*|ram:*ddr*|ram:*memory*)
+                echo "$((raw / 1000))C"
+                shopt -u nullglob
+                return 0
+                ;;
+            nvme:*nvme*)
+                echo "$((raw / 1000))C"
+                shopt -u nullglob
+                return 0
+                ;;
+            board:*acpitz*|board:*pch*|board:*soc*|board:*board*|board:*mb*)
+                echo "$((raw / 1000))C"
+                shopt -u nullglob
+                return 0
+                ;;
+        esac
+    done
+    shopt -u nullglob
+    return 1
+}
+
+read_temp_from_sensors() {
+    local want="$1"
+    local line chip
+
+    [[ -x "$(command -v sensors 2>/dev/null)" ]] || return 1
+
+    while IFS= read -r line; do
+        if [[ -z "$line" ]]; then
+            chip=""
+            continue
+        fi
+
+        if [[ "$line" != *:* ]]; then
+            chip="$(tr '[:upper:]' '[:lower:]' <<<"$line")"
+            continue
+        fi
+
+        case "$want" in
+            cpu)
+                if [[ "$line" =~ ^Tctl:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    echo "${BASH_REMATCH[1]}C"
+                    return 0
+                fi
+                if [[ "$line" =~ ^Package[[:space:]]id[[:space:]]0:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    echo "${BASH_REMATCH[1]}C"
+                    return 0
+                fi
+                if [[ "$line" =~ ^CPU[[:space:]]Temp:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    echo "${BASH_REMATCH[1]}C"
+                    return 0
+                fi
+                if [[ "$line" =~ ^temp1:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ (k10temp|coretemp|cpu) ]]; then
+                    echo "${BASH_REMATCH[1]}C"
+                    return 0
+                fi
+                ;;
+            gpu)
+                if [[ "$line" =~ ^(edge|junction|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ (amdgpu|radeon|nouveau|gpu) ]]; then
+                    echo "${BASH_REMATCH[2]}C"
+                    return 0
+                fi
+                ;;
+            ram)
+                if [[ "$line" =~ ^(DIMM|SODIMM|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ (dimm|spd|jc42|ddr|ram|memory) ]]; then
+                    echo "${BASH_REMATCH[2]}C"
+                    return 0
+                fi
+                ;;
+            nvme)
+                if [[ "$line" =~ ^(Composite|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ nvme ]]; then
+                    echo "${BASH_REMATCH[2]}C"
+                    return 0
+                fi
+                ;;
+            board)
+                if [[ "$line" =~ ^(System|Motherboard|Board|MB):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    echo "${BASH_REMATCH[2]}C"
+                    return 0
+                fi
+                ;;
+        esac
+    done < <(LC_ALL=C sensors 2>/dev/null)
+
+    return 1
+}
+
+get_host_temperatures() {
+    local want label temp
+
+    for want in cpu gpu ram nvme board; do
+        temp="$(read_temp_from_thermal_zones "$want" 2>/dev/null || true)"
+        if [[ -z "$temp" ]]; then
+            temp="$(read_temp_from_sensors "$want" 2>/dev/null || true)"
+        fi
+        [[ -n "$temp" ]] || continue
+
+        case "$want" in
+            cpu) label="CPU" ;;
+            gpu) label="GPU" ;;
+            ram) label="RAM" ;;
+            nvme) label="NVMe" ;;
+            board) label="Board" ;;
+            *) label="Temp" ;;
+        esac
+
+        printf '%s %s\n' "$label" "$temp"
+        return 0
+    done
+
+    printf 'Temp n/a\n'
 }
 
 # Get current player count by scanning the full server log

@@ -1,4 +1,4 @@
-.PHONY: setup steamcmd-local engine-github install-man help
+.PHONY: setup steamcmd-local engine-github tui-build tui-run install-man help
 
 DIRS := Engine Mods Logs Worlds ModConfigs \
         Backups/Worlds Backups/Configs Backups/Full \
@@ -12,6 +12,8 @@ help:
 	@echo "  make setup        Create required directories, copy example configs, chmod scripts"
 	@echo "  make steamcmd-local Download SteamCMD into Tools/SteamCMD"
 	@echo "  make engine-github Install latest tModLoader release into Engine from GitHub"
+	@echo "  make tui-build    Build the persistent Go TUI into bin/tmodloader-ui"
+	@echo "  make tui-run      Run the persistent Go TUI from source"
 	@echo "  make install-man  Install man page to $(MANDIR) (requires sudo)"
 	@echo "  make help         Show this message"
 
@@ -50,7 +52,8 @@ setup:
 	@echo "  1. Run: make steamcmd-local      # optional, installs SteamCMD into this project"
 	@echo "  2. Edit Scripts/env.sh if you want local env vars like STEAM_USERNAME"
 	@echo "  3. Edit Configs/serverconfig.txt only if you want non-default server settings"
-	@echo "  4. Run: bash Scripts/hub/tmod-control.sh"
+	@echo "  4. Run: make tui-run             # persistent headless UI"
+	@echo "     or: bash Scripts/hub/tmod-control.sh  # same control room via shell entrypoint"
 
 steamcmd-local:
 	@echo "Installing SteamCMD into Tools/SteamCMD..."
@@ -81,6 +84,14 @@ engine-github:
 		echo "Engine install is missing expected tModLoader files"; \
 		exit 1; \
 	fi
+
+tui-build:
+	@mkdir -p bin
+	@go build -o bin/tmodloader-ui .
+	@echo "Built bin/tmodloader-ui"
+
+tui-run:
+	@go run .
 
 install-man:
 	@echo "Installing man page to $(MANDIR)..."

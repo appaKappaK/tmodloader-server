@@ -1,6 +1,6 @@
 #!/bin/bash
 # tmod-control.sh - Enhanced unified control system with advanced management
-export SCRIPT_VERSION="2.5.2"
+export SCRIPT_VERSION="2.6.0"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Correct path to tmod-core.sh (it's in ../core relative to hub directory)
@@ -62,6 +62,31 @@ check_dependencies() {
     fi
     
     return 0
+}
+
+launch_go_tui() {
+    local mode="${1:-interactive}"
+
+    case "${TMOD_FORCE_LEGACY_UI:-0}" in
+        1|true|TRUE|yes|YES) return 1 ;;
+    esac
+
+    case "$mode" in
+        classic|legacy|plain|palette|fzf|dialog) return 1 ;;
+    esac
+
+    local tui_bin="$BASE_DIR/bin/tmodloader-ui"
+    if [[ -x "$tui_bin" ]]; then
+        cd "$BASE_DIR" || return 1
+        exec "$tui_bin"
+    fi
+
+    if command -v go >/dev/null 2>&1 && [[ -f "$BASE_DIR/go.mod" ]]; then
+        cd "$BASE_DIR" || return 1
+        exec go run .
+    fi
+
+    return 1
 }
 
 # Enhanced server control functions
@@ -1452,12 +1477,31 @@ show_command_palette() {
 }
 
 show_interactive_menu() {
-    local mode="${1:-palette}"
+    local mode="${1:-interactive}"
 
     case "$mode" in
         classic) show_classic_menu ;;
-        palette|"") show_command_palette ;;
-        *) show_command_palette ;;
+        palette|legacy|plain|fzf|dialog) show_command_palette ;;
+        tui|go)
+            if launch_go_tui "interactive"; then
+                return 0
+            fi
+            echo "⚠️ Go TUI unavailable; falling back to the legacy command palette."
+            show_command_palette
+            ;;
+        ""|interactive|menu)
+            if launch_go_tui "interactive"; then
+                return 0
+            fi
+            echo "ℹ️ Go TUI not found; using the legacy shell command palette."
+            show_command_palette
+            ;;
+        *)
+            if launch_go_tui "$mode"; then
+                return 0
+            fi
+            show_command_palette
+            ;;
     esac
 }
 
@@ -1704,9 +1748,10 @@ Quick Commands:
   restart               Restart server (shortcut)
   status                Quick status overview
   backup                Auto backup (shortcut)
-  interactive           Interactive command palette
+  interactive           Launch Go TUI when available, otherwise legacy palette
   interactive classic   Classic numbered menu
-  interactive palette   Command palette
+  interactive palette   Force the legacy shell palette
+  tui                   Force the Go TUI
   help                  Show this help
 
 Examples:
@@ -1718,21 +1763,25 @@ Examples:
   ./tmod-control.sh backup auto              # Complete backup
   ./tmod-control.sh monitor start            # Start monitoring
   ./tmod-control.sh workshop download        # Download workshop mods
-  ./tmod-control.sh interactive              # Launch command palette
+  ./tmod-control.sh interactive              # Launch Go TUI if available
   ./tmod-control.sh interactive classic      # Launch classic numbered menu
+  ./tmod-control.sh tui                      # Force the Go TUI
   ./tmod-control.sh maintenance              # Run maintenance
 
 Interactive Mode:
   ./tmod-control.sh interactive
+  ./tmod-control.sh tui
   ./tmod-control.sh interactive classic
+  TMOD_FORCE_LEGACY_UI=1 ./tmod-control.sh interactive
   TMOD_UI_MODE=dialog ./tmod-control.sh interactive
   TMOD_UI_MODE=fzf ./tmod-control.sh interactive
 
-  The default interactive UI is a dependency-aware command palette:
+  Interactive requests prefer the Go TUI when a built binary or local Go toolchain is available.
+  When the Go TUI is unavailable, the legacy shell hub falls back to a dependency-aware command palette:
   - fzf is used for searchable pickers when available
   - dialog is used for boxed menus and log viewers when available
   - plain Bash menus remain as the fallback
-  The classic numbered menu is still available for users who prefer it.
+  Use TMOD_FORCE_LEGACY_UI=1 or interactive classic if you want the old shell UI on purpose.
 
 Automation Examples:
   # Daily maintenance at 3 AM
@@ -1750,7 +1799,7 @@ Automation Examples:
 
 Features:
   ✅ Unified control of all server operations
-  ✅ Headless-friendly command palette with optional dialog/fzf UI
+  ✅ Persistent Go TUI with shell-script backend fallback
   ✅ Comprehensive maintenance automation
   ✅ Emergency procedures with safety backups
   ✅ System health monitoring and diagnostics
@@ -1790,7 +1839,7 @@ main() {
     local cmd="${1:-interactive}"
     local skip_dep_check=false
     case "$cmd" in
-        status|logs|help|--help|-h|"") skip_dep_check=true ;;
+        status|logs|help|interactive|menu|tui|--help|-h|"") skip_dep_check=true ;;
     esac
 
     if [[ "$skip_dep_check" == "false" ]] && ! check_dependencies; then
@@ -1903,19 +1952,20 @@ main() {
             ;;
         
         # Interactive mode
-        interactive|menu) show_interactive_menu "${2:-palette}" ;;
+        interactive|menu) show_interactive_menu "${2:-interactive}" ;;
+        tui)             show_interactive_menu "tui" ;;
         
         # Help
         help|--help|-h) show_help ;;
         
         # Default - show interactive menu
-        "")             show_interactive_menu ;;
+        "")             show_interactive_menu "interactive" ;;
         
         # Unknown command
         *)
             echo "❌ Unknown command: $1"
             echo "💡 Use './tmod-control.sh help' for usage information"
-            echo "💡 Use './tmod-control.sh interactive' for the interactive menu"
+            echo "💡 Use './tmod-control.sh interactive' for the control room"
             exit 1
             ;;
     esac
