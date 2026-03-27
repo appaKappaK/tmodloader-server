@@ -971,6 +971,7 @@ _update_engine() {
 
     if [[ -z "$steam_user" ]]; then
         echo "  ⚠️  tModLoader engine downloads require a Steam account that owns Terraria."
+        echo "  💡 For a public no-login install, you can also run: make engine-github"
         echo "  💡 Set STEAM_USERNAME in Scripts/env.sh or enter it now."
         read -r -p "  Steam username: " steam_user
         if [[ -z "$steam_user" ]]; then
@@ -1001,6 +1002,7 @@ _update_engine() {
     if [[ ! -f "$engine_dir/steamapps/appmanifest_1281930.acf" ]]; then
         echo "  ❌ Engine install did not produce appmanifest_1281930.acf"
         echo "  💡 Make sure the Steam account owns Terraria and completed any password/Steam Guard prompt."
+        echo "  💡 Or use the GitHub release path instead: make engine-github"
         log_control "Engine update failed: no appmanifest_1281930.acf after SteamCMD run" "ERROR"
         return 1
     fi

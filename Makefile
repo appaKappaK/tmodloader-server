@@ -1,4 +1,4 @@
-.PHONY: setup steamcmd-local install-man help
+.PHONY: setup steamcmd-local engine-github install-man help
 
 DIRS := Engine Mods Logs Worlds ModConfigs \
         Backups/Worlds Backups/Configs Backups/Full \
@@ -11,6 +11,7 @@ help:
 	@echo ""
 	@echo "  make setup        Create required directories, copy example configs, chmod scripts"
 	@echo "  make steamcmd-local Download SteamCMD into Tools/SteamCMD"
+	@echo "  make engine-github Install latest tModLoader release into Engine from GitHub"
 	@echo "  make install-man  Install man page to $(MANDIR) (requires sudo)"
 	@echo "  make help         Show this message"
 
@@ -58,6 +59,28 @@ steamcmd-local:
 		| tar -xzf - -C Tools/SteamCMD
 	@chmod +x Tools/SteamCMD/steamcmd.sh 2>/dev/null || true
 	@echo "SteamCMD installed at Tools/SteamCMD/steamcmd.sh"
+
+engine-github:
+	@echo "Downloading latest tModLoader release into Engine..."
+	@mkdir -p Engine
+	@tmp_zip=$$(mktemp); \
+		if ! curl -fsSL "https://github.com/tModLoader/tModLoader/releases/latest/download/tModLoader.zip" -o "$$tmp_zip"; then \
+			rm -f "$$tmp_zip"; \
+			echo "Failed to download tModLoader.zip from GitHub releases"; \
+			exit 1; \
+		fi; \
+		if ! unzip -oq "$$tmp_zip" -d Engine; then \
+			rm -f "$$tmp_zip"; \
+			echo "Failed to extract tModLoader.zip into Engine"; \
+			exit 1; \
+		fi; \
+		rm -f "$$tmp_zip"
+	@if [ -f Engine/tModLoader.runtimeconfig.json ] && [ -f Engine/start-tModLoaderServer.sh ]; then \
+		echo "tModLoader release extracted into Engine"; \
+	else \
+		echo "Engine install is missing expected tModLoader files"; \
+		exit 1; \
+	fi
 
 install-man:
 	@echo "Installing man page to $(MANDIR)..."

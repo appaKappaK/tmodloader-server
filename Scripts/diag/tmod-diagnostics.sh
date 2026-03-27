@@ -231,13 +231,29 @@ check_tmodloader_binaries() {
             fi
         fi
     else
-        echo "❌ No tModLoader binary found"
-        echo "💡 Searched locations:"
-        echo "   📍 $BASE_DIR/tModLoaderServer"
-        echo "   📍 $BASE_DIR/tModLoaderServer.bin.x86_64"
-        echo "   📍 $BASE_DIR/Engine/tModLoaderServer"
-        echo "   📍 $BASE_DIR/Engine/dotnet + $BASE_DIR/Engine/tModLoader.dll"
-        log_diagnostic "No tModLoader binary found" "ERROR"
+        local engine_dll="$BASE_DIR/Engine/tModLoader.dll"
+        local runtimeconfig="$BASE_DIR/Engine/tModLoader.runtimeconfig.json"
+        local install_script="$BASE_DIR/Engine/LaunchUtils/InstallDotNet.sh"
+
+        if [[ -f "$engine_dll" && -f "$runtimeconfig" && -f "$install_script" ]]; then
+            echo "✅ tModLoader engine files detected"
+            echo "   🔍 Type: Fresh engine install awaiting runtime bootstrap"
+            echo "   📍 DLL: $engine_dll"
+            echo "   📍 Runtime config: $runtimeconfig"
+            echo "   📍 Dotnet installer: $install_script"
+            echo "   ℹ️ Local Engine/dotnet/ runtime is not installed yet"
+            echo "   💡 The toolkit will install the required .NET runtime automatically on first server start"
+            binary_found=true
+            log_diagnostic "Fresh engine install detected - runtime will bootstrap on first start" "INFO"
+        else
+            echo "❌ No tModLoader binary found"
+            echo "💡 Searched locations:"
+            echo "   📍 $BASE_DIR/tModLoaderServer"
+            echo "   📍 $BASE_DIR/tModLoaderServer.bin.x86_64"
+            echo "   📍 $BASE_DIR/Engine/tModLoaderServer"
+            echo "   📍 $BASE_DIR/Engine/dotnet + $BASE_DIR/Engine/tModLoader.dll"
+            log_diagnostic "No tModLoader binary found" "ERROR"
+        fi
     fi
 
     log_diagnostic "Binary check completed - Found: $binary_found" "INFO"
