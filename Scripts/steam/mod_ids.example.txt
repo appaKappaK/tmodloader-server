@@ -1,0 +1,20 @@
+# tModLoader Workshop Mod IDs
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to mod_ids.txt and add your mod IDs:
+#   cp Scripts/steam/mod_ids.example.txt Scripts/steam/mod_ids.txt
+#
+# Lines starting with # are ignored.
+# One Steam Workshop URL or numeric ID per line.
+# IDs can be added via the menu: Mods → Add Mod by URL or ID
+#
+# Example mods (uncomment to use):
+# 2563309347  # Calamity Mod
+# 2565639705  # Thorium Mod
+# 2568564996  # Magic Storage
+# 2564692595  # Recipe Browser
+# 2564992847  # Yet Another Boss Health Bar
+# 2559899376  # Fargo's Mutant Mod
+# 2564593266  # VeinMiner
+
+# Add your mod IDs below:
+

@@ -1,0 +1,26 @@
+# Runtime content
+/Engine/
+/Mods/
+/Worlds/
+/ModConfigs/
+/Backups/
+/Logs/
+/Tools/SteamCMD/
+
+# Local configuration
+/Configs/serverconfig.txt
+/Configs/workshop_map.json
+/Scripts/env.sh
+/Scripts/steam/mod_ids.txt
+
+# Temporary and backup files
+*.bak
+*.old
+*.old.gz
+*.tmp
+*.swp
+*.swo
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

@@ -1,0 +1,234 @@
+.TH TMOD\-CONTROL 1 "2026-03-02" "v2.5.0" "tModLoader Server Management"
+.SH NAME
+tmod\-control \- headless tModLoader dedicated server management toolkit
+.SH SYNOPSIS
+.B tmod\-control.sh
+[\fB\-\-debug\fR]
+[\fIcommand\fR]
+[\fIsubcommand\fR]
+[\fIargs\fR...]
+.SH DESCRIPTION
+.B tmod\-control.sh
+is the central entry point for managing a headless tModLoader dedicated server.
+With no arguments it launches an interactive menu. Commands can also be passed
+directly for scripting or automation.
+.PP
+All child scripts (backup, workshop, monitor, diagnostics) are invoked through
+this hub and inherit any flags set here.
+.SH OPTIONS
+.TP
+.B \-\-debug
+Enable verbose logging. Exports
+.B TMOD_DEBUG=1
+to all child processes so INFO\-level messages are printed to the terminal in
+addition to the log files. Without this flag only WARN, ERROR, and CRITICAL
+messages are printed.
+.TP
+.BR \-h ", " \-\-help ", " help
+Print a usage summary and exit.
+.SH COMMANDS
+.SS Server control
+.TP
+.B start
+Start the tModLoader server in a detached
+.BR screen (1)
+session.
+.TP
+.B stop
+Gracefully stop the running server.
+.TP
+.B restart
+Stop then start the server.
+.TP
+.B status
+Print a quick status line: running state, uptime, player count, active world.
+.TP
+.B server start|stop|restart|status
+Explicit form of the above shortcuts.
+.SS Backup
+.TP
+.B backup
+Run an automatic backup (worlds + configs). Equivalent to
+.BR "backup auto" .
+.TP
+.B backup worlds
+Back up world save files to
+.IR Backups/Worlds/ .
+.TP
+.B backup configs
+Back up configuration files to
+.IR Backups/Configs/ .
+.TP
+.B backup full
+Full backup of worlds, configs, and mods to
+.IR Backups/Full/ .
+.TP
+.B backup list
+List existing backups with sizes and timestamps.
+.TP
+.B backup restore
+Interactive restore picker.
+.TP
+.B backup cleanup
+Remove backups older than the configured retention period.
+.SS Monitoring
+.TP
+.B monitor status
+Show the current monitoring daemon status.
+.TP
+.B monitor start
+Start the background health\-check monitor.
+.TP
+.B monitor logs
+Tail the monitor log.
+.SS Steam Workshop
+.TP
+.B workshop download
+Download all mods listed in
+.I Scripts/steam/mod_ids.txt
+via SteamCMD.
+.TP
+.B workshop sync
+Copy downloaded workshop mods into the server
+.I Mods/
+directory.
+.TP
+.B workshop list
+List downloaded workshop mods with name and version.
+.TP
+.B workshop archive
+Archive old mod versions, keeping only the latest.
+.TP
+.B workshop cleanup
+Remove incomplete downloads and empty staging directories.
+.TP
+.B workshop status
+Show workshop system configuration and SteamCMD path.
+.TP
+.B workshop init
+Initialise the workshop system (create required files and directories).
+.SS Mod load management
+.TP
+.B mods list
+Show all installed mods with enabled/disabled state.
+.TP
+.B mods enable \fIname\fR
+Enable a mod by name. Use
+.B all
+to enable every installed mod.
+.TP
+.B mods disable \fIname\fR
+Disable a mod by name. Use
+.B all
+to disable every installed mod.
+.TP
+.B mods pick
+Open an interactive numbered toggle menu — no arrow keys needed, works over SSH.
+.SS Utility
+.TP
+.B logs
+Print the last 20 lines of the server log.
+.TP
+.B diagnostics
+Run the full system diagnostic report (script status, paths, config, disk).
+.TP
+.B health
+Alias for
+.BR diagnostics .
+.TP
+.B maintenance
+Run routine maintenance tasks (log rotation, backup cleanup).
+.TP
+.B emergency
+Emergency shutdown — kills the server screen session immediately.
+.TP
+.B interactive
+Launch the full interactive menu (default when no arguments given).
+.SH FILES
+.TP
+.I Configs/serverconfig.txt
+Main server configuration. Manages port, max players, world path, and
+tmod\-scripts settings (steamcmd_path, log_max_size, log_keep_days).
+Created from
+.I Configs/serverconfig.example.txt
+on first setup via
+.BR "make setup" .
+.TP
+.I Scripts/steam/mod_ids.txt
+Steam Workshop mod IDs — one numeric ID or Workshop URL per line. Lines
+beginning with
+.B #
+are ignored. Created from
+.I Scripts/steam/mod_ids.example.txt
+on first setup. Gitignored (personal mod list).
+.TP
+.I Logs/
+Script and server log files. Rotated automatically based on
+.B log_max_size
+and
+.B log_keep_days
+in
+.IR serverconfig.txt .
+.TP
+.I Backups/
+Automated backup storage. Subdirectories: Worlds/, Configs/, Full/.
+.TP
+.I Engine/
+tModLoader binary files. Installed via SteamCMD (gitignored).
+.TP
+.I Mods/
+Installed .tmod files and enabled.json. Managed by the workshop and mods commands.
+.SH ENVIRONMENT
+.TP
+.B TMOD_DEBUG
+Set to
+.B 1
+to enable verbose terminal output across all scripts. Equivalent to passing
+.B \-\-debug
+to
+.BR tmod\-control.sh .
+.TP
+.B STEAM_USERNAME
+Steam account username for Workshop downloads requiring login. Should be
+exported from
+.I ~/.bashrc_secrets
+or equivalent — never stored in a tracked file.
+.TP
+.B STEAM_API_KEY
+Steam Web API key used by
+.BR tmod\-deps.sh .
+Should be exported from
+.I ~/.bashrc_secrets
+or equivalent.
+.SH EXAMPLES
+.TP
+Open the interactive menu:
+.B ./Scripts/hub/tmod-control.sh
+.TP
+Start the server with verbose output:
+.B ./Scripts/hub/tmod-control.sh \-\-debug start
+.TP
+Download workshop mods and sync to server:
+.B ./Scripts/hub/tmod-control.sh workshop download
+.br
+.B ./Scripts/hub/tmod-control.sh workshop sync
+.TP
+Enable a mod by name:
+.B ./Scripts/hub/tmod-control.sh mods enable CalamityMod
+.TP
+Take a full backup:
+.B ./Scripts/hub/tmod-control.sh backup full
+.TP
+Run diagnostics:
+.B ./Scripts/hub/tmod-control.sh diagnostics
+.SH SEE ALSO
+.BR screen (1),
+.BR steamcmd (1),
+.BR bash (1)
+.PP
+Project repository:
+.I https://github.com/appaKappaK/tmodloaderserver
+.SH AUTHOR
+appaKappaK
+.SH LICENSE
+Apache License 2.0. Modified files must carry a notice stating they were changed.

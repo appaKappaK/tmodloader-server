@@ -1,0 +1,29 @@
+# ─── World ────────────────────────────────────────────────────────────────────
+# world=       # Set automatically by world picker — do not edit manually
+# worldname=   # Set automatically by world picker — do not edit manually
+# autocreate=   # 1=Small  2=Medium  3=Large  (only used if world file doesn't exist)
+# seed=         # World seed (leave blank for random)
+
+# ─── Server ───────────────────────────────────────────────────────────────────
+port=7777
+maxplayers=8
+# password=     # Leave blank for no password
+# motd=         # Message shown to players on join
+
+# ─── Difficulty ───────────────────────────────────────────────────────────────
+# difficulty=   # 0=Classic  1=Expert  2=Master  3=Journey  (world creation only)
+
+# ─── Gameplay ─────────────────────────────────────────────────────────────────
+ npcstream=60  # NPC streaming distance (lower = less bandwidth, default 60)
+ language=en   # en / de / it / fr / es / ru / zh / pt / pl
+# secure=1      # 1=Enable VAC anti-cheat  0=Disable
+ upnp=1        # 1=Enable UPnP port forwarding  0=Disable
+
+# ─── Banning ──────────────────────────────────────────────────────────────────
+# banlist=banlist.txt
+
+# ─── tmod-scripts ─────────────────────────────────────────────────────────────
+steamcmd_path=./Tools/SteamCMD/steamcmd.sh
+# Paths here may be absolute, ~/..., or project-relative like ./Tools/SteamCMD/steamcmd.sh
+log_max_size=10M    # Rotate logs larger than this (e.g. 5M, 10M, 50M)
+log_keep_days=14    # Delete compressed old logs after this many days
