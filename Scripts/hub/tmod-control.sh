@@ -962,10 +962,21 @@ _update_engine() {
     local steamcmd
     steamcmd="$(get_steamcmd_path)"
     local engine_dir="$BASE_DIR/Engine"
+    local steam_user="${STEAM_USERNAME:-}"
 
     if [[ ! -f "$steamcmd" ]]; then
         echo "  ❌ SteamCMD not found at: $steamcmd"
         return 1
+    fi
+
+    if [[ -z "$steam_user" ]]; then
+        echo "  ⚠️  tModLoader engine downloads require a Steam account that owns Terraria."
+        echo "  💡 Set STEAM_USERNAME in Scripts/env.sh or enter it now."
+        read -r -p "  Steam username: " steam_user
+        if [[ -z "$steam_user" ]]; then
+            echo "  Cancelled."
+            return 1
+        fi
     fi
 
     local current_build
@@ -983,9 +994,16 @@ _update_engine() {
     echo "  Updating tModLoader engine (app 1281930)..."
     "$steamcmd" \
         +force_install_dir "$engine_dir" \
-        +login anonymous \
+        +login "$steam_user" \
         +app_update 1281930 \
         +quit
+
+    if [[ ! -f "$engine_dir/steamapps/appmanifest_1281930.acf" ]]; then
+        echo "  ❌ Engine install did not produce appmanifest_1281930.acf"
+        echo "  💡 Make sure the Steam account owns Terraria and completed any password/Steam Guard prompt."
+        log_control "Engine update failed: no appmanifest_1281930.acf after SteamCMD run" "ERROR"
+        return 1
+    fi
 
     local new_build
     new_build=$(grep '"buildid"' "$engine_dir/steamapps/appmanifest_1281930.acf" 2>/dev/null | grep -o '[0-9]*' | head -1)

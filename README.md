@@ -33,8 +33,9 @@ This edition is built around a self-contained project layout: the server engine,
 1. Install system packages.
 2. Run `make setup`.
 3. Optionally run `make steamcmd-local`.
-4. Install tModLoader server files into `Engine/`.
-5. Start the control hub.
+4. Set `STEAM_USERNAME` for a Steam account that owns Terraria.
+5. Install tModLoader server files into `Engine/`.
+6. Start the control hub.
 
 ### 1. Install Packages
 
@@ -67,17 +68,29 @@ make steamcmd-local
 
 This installs SteamCMD into `Tools/SteamCMD/steamcmd.sh`, which matches the default `steamcmd_path` in `Configs/serverconfig.txt`.
 
-### 4. Install tModLoader Server Files
+### 4. Set Your Steam Username
+
+Add your Steam username to `Scripts/env.sh`:
+
+```bash
+export STEAM_USERNAME="your_steam_username"
+```
+
+tModLoader can be queried anonymously through SteamCMD, but the actual engine download requires a Steam account that owns Terraria.
+
+### 5. Install tModLoader Server Files
 
 ```bash
 ./Tools/SteamCMD/steamcmd.sh \
   +force_install_dir "$PWD/Engine" \
-  +login anonymous \
+  +login "$STEAM_USERNAME" \
   +app_update 1281930 validate \
   +quit
 ```
 
-### 5. Launch the Toolkit
+SteamCMD will prompt for the password and any Steam Guard code it needs. After a successful install, `Engine/` should contain the tModLoader binaries, `tModLoader.dll`, and `steamapps/appmanifest_1281930.acf`.
+
+### 6. Launch the Toolkit
 
 ```bash
 bash Scripts/hub/tmod-control.sh
