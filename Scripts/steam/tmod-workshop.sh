@@ -1,6 +1,6 @@
 #!/bin/bash
 # tmod-workshop.sh - Steam Workshop mod management and downloading
-export SCRIPT_VERSION="2.5.0"
+export SCRIPT_VERSION="2.5.2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SCRIPT="$SCRIPT_DIR/../core/tmod-core.sh"
 
@@ -23,6 +23,8 @@ STEAM_USERNAME="${STEAM_USERNAME:-}"
 MOD_IDS_FILE="$BASE_DIR/Scripts/steam/mod_ids.txt"
 WORKSHOP_DOWNLOAD_DIR="${WORKSHOP_DIR:-$BASE_DIR/Engine/steamapps/workshop/content/1281930}"
 ARCHIVE_DIR="$BASE_DIR/Mods/archived_mods"
+WORKSHOP_ASSUME_YES=0
+WORKSHOP_PARSED_ARGS=()
 
 get_workshop_login_user() {
     if [[ -n "$STEAM_USERNAME" ]]; then
@@ -64,6 +66,23 @@ retry_workshop_download_item() {
         +login "$steam_login_user" \
         +workshop_download_item 1281930 "$mod_id" \
         +quit >> "$output_file" 2>&1
+}
+
+workshop_parse_yes_flags() {
+    WORKSHOP_ASSUME_YES=0
+    WORKSHOP_PARSED_ARGS=()
+
+    while (( $# > 0 )); do
+        case "$1" in
+            -y|--yes|--force)
+                WORKSHOP_ASSUME_YES=1
+                ;;
+            *)
+                WORKSHOP_PARSED_ARGS+=("$1")
+                ;;
+        esac
+        shift
+    done
 }
 
 # Enhanced logging for workshop operations
@@ -133,9 +152,16 @@ create_example_mod_ids_file() {
 # Add your mod IDs below:
 
 EOF
-        echo "📄 Created example mod_ids.txt file"
+    echo "📄 Created example mod_ids.txt file"
     fi
     echo "💡 Edit $MOD_IDS_FILE to add your desired mod IDs"
+}
+
+count_configured_mod_ids() {
+    local count
+    count=$(grep -cEv '^[[:space:]]*#|^[[:space:]]*$' "$MOD_IDS_FILE" 2>/dev/null || true)
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    echo "$count"
 }
 
 # Download mods from Steam Workshop
@@ -316,6 +342,7 @@ sync_downloaded_mods() {
 
         # Skip versions newer than what the server supports
         if version_gt "$version" "$MAX_ALLOWED_VERSION"; then continue; fi
+        if ! is_compatible_version "$version"; then continue; fi
 
         # Keep the latest compatible version for each mod
         local current_best="${compatible_mods[$mod_name]}"
@@ -373,10 +400,14 @@ sync_downloaded_mods() {
     fi
 
     # CONFIRMATION PROMPT
-    read -p "❓ Proceed with syncing $preview_sync_count mods? [y/N]: " -r REPLY
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "❌ Sync cancelled"
-        return 0
+    if (( WORKSHOP_ASSUME_YES )); then
+        echo "ℹ️ Auto-confirm enabled — proceeding with sync"
+    else
+        read -p "❓ Proceed with syncing $preview_sync_count mods? [y/N]: " -r REPLY
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "❌ Sync cancelled"
+            return 0
+        fi
     fi
     
     echo
@@ -472,10 +503,14 @@ archive_old_versions() {
     echo
     
     # CONFIRMATION PROMPT
-    read -p "❓ Proceed with archiving? [y/N]: " -r REPLY
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "❌ Archive cancelled by user"
-        return 0
+    if (( WORKSHOP_ASSUME_YES )); then
+        echo "ℹ️ Auto-confirm enabled — proceeding with archive"
+    else
+        read -p "❓ Proceed with archiving? [y/N]: " -r REPLY
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "❌ Archive cancelled by user"
+            return 0
+        fi
     fi
     
     echo
@@ -596,7 +631,7 @@ show_mod_ids() {
     fi
 
     local mod_count
-    mod_count=$(grep -vc "^[[:space:]]*#\|^[[:space:]]*$" "$MOD_IDS_FILE" 2>/dev/null || echo 0)
+    mod_count=$(count_configured_mod_ids)
 
     if [[ "$mod_count" -eq 0 ]]; then
         echo "  mod_ids.txt is empty — no mods queued."
@@ -701,7 +736,7 @@ show_status() {
     
     if [[ -f "$MOD_IDS_FILE" ]]; then
         local mod_count
-        mod_count=$(grep -vc "^[[:space:]]*#\|^[[:space:]]*$" "$MOD_IDS_FILE" 2>/dev/null || echo 0)
+        mod_count=$(count_configured_mod_ids)
         echo "   ✅ Mod IDs File: $mod_count mod IDs configured"
     else
         echo "   ❌ Mod IDs File: Not found"
@@ -1258,10 +1293,15 @@ mod_ids_add() {
     # Warn if placeholder/example lines are still present
     if grep -qE '^\.\.\.|^[0-9].*#\s*EXAMPLE' "$MOD_IDS_FILE" 2>/dev/null; then
         echo "  ⚠️  mod_ids.txt has example/placeholder entries (... or # EXAMPLE lines)."
-        read -p "  Clean them out before adding? (yes/no): " -r _clean
-        if [[ "$_clean" == "yes" ]]; then
+        if (( WORKSHOP_ASSUME_YES )); then
             sed -i '/^\.\.\./d; /[0-9].*#[[:space:]]*EXAMPLE/d' "$MOD_IDS_FILE"
             echo "  ✅ Placeholder entries removed."
+        else
+            read -p "  Clean them out before adding? (yes/no): " -r _clean
+            if [[ "$_clean" == "yes" ]]; then
+                sed -i '/^\.\.\./d; /[0-9].*#[[:space:]]*EXAMPLE/d' "$MOD_IDS_FILE"
+                echo "  ✅ Placeholder entries removed."
+            fi
         fi
     fi
 
@@ -1282,7 +1322,7 @@ mod_ids_add() {
     log_workshop "Added mod: $mod_name ($mod_id)" "INFO"
 
     local total
-    total=$(grep -vc "^[[:space:]]*#\|^[[:space:]]*$" "$MOD_IDS_FILE" 2>/dev/null || echo 0)
+    total=$(count_configured_mod_ids)
     echo "   mod_ids.txt now has $total mod(s)"
 }
 
@@ -1296,7 +1336,7 @@ mod_ids_clear() {
     fi
 
     local total
-    total=$(grep -vc "^[[:space:]]*#\|^[[:space:]]*$" "$MOD_IDS_FILE" 2>/dev/null || echo 0)
+    total=$(count_configured_mod_ids)
 
     if [[ "$total" -eq 0 ]]; then
         echo "ℹ️  mod_ids.txt already has no mod IDs."
@@ -1305,10 +1345,14 @@ mod_ids_clear() {
 
     echo "⚠️  This will remove all $total mod ID(s) from mod_ids.txt."
     echo "   A backup will be saved to mod_ids.txt.bak"
-    read -p "   Type YES to confirm: " -r confirm
-    if [[ "$confirm" != "YES" ]]; then
-        echo "   Cancelled."
-        return 0
+    if (( WORKSHOP_ASSUME_YES )); then
+        echo "   Auto-confirm enabled — clearing mod IDs."
+    else
+        read -p "   Type YES to confirm: " -r confirm
+        if [[ "$confirm" != "YES" ]]; then
+            echo "   Cancelled."
+            return 0
+        fi
     fi
 
     cp "$MOD_IDS_FILE" "${MOD_IDS_FILE}.bak"
@@ -1322,12 +1366,16 @@ mod_ids_clear() {
 }
 
 mods_cmd() {
-    case "${1:-list}" in
+    local subcommand="${1:-list}"
+    shift || true
+    workshop_parse_yes_flags "$@"
+
+    case "$subcommand" in
         list)           mods_list ;;
-        enable)         mods_enable  "${2:-}" ;;
-        disable)        mods_disable "${2:-}" ;;
+        enable)         mods_enable  "${WORKSHOP_PARSED_ARGS[0]:-}" ;;
+        disable)        mods_disable "${WORKSHOP_PARSED_ARGS[0]:-}" ;;
         pick|toggle)    mods_pick ;;
-        add)            mod_ids_add   "${2:-}" ;;
+        add)            mod_ids_add   "${WORKSHOP_PARSED_ARGS[0]:-}" ;;
         ids|show)       show_mod_ids ;;
         clear)          mod_ids_clear ;;
         *)
@@ -1336,9 +1384,9 @@ mods_cmd() {
             echo "  mods enable  <n>       Enable a mod (or 'all')"
             echo "  mods disable <n>       Disable a mod (or 'all')"
             echo "  mods pick              Interactive toggle menu"
-            echo "  mods add <url|id>      Add a Workshop URL or ID to mod_ids.txt"
+            echo "  mods add [--yes] <url|id>  Add a Workshop URL or ID to mod_ids.txt"
             echo "  mods ids               Show queued mods in mod_ids.txt with names"
-            echo "  mods clear             Clear all mod IDs from mod_ids.txt"
+            echo "  mods clear [--yes]     Clear all mod IDs from mod_ids.txt"
             ;;
     esac
 }
@@ -1356,9 +1404,9 @@ Usage: ./tmod-workshop.sh [command]
 
 Commands:
   download        Download mods from Steam Workshop using mod_ids.txt
-  sync            Sync downloaded mods to server mods directory
+  sync [--yes]    Sync downloaded mods to server mods directory
   list            List downloaded workshop mods with details
-  archive         Archive old mod versions, keep only latest
+  archive [--yes] Archive old mod versions, keep only latest
   cleanup         Clean up incomplete downloads and empty directories
   ids             Show/edit mod IDs configuration file
   status          Show workshop system status and configuration
@@ -1370,6 +1418,8 @@ Mod Load Management:
   mods enable  <name>    Enable a mod (use 'all' to enable everything)
   mods disable <name>    Disable a mod (use 'all' to disable everything)
   mods pick              Interactive toggle menu — no nano needed
+  mods add [--yes] <id>  Add a mod ID and auto-clean placeholders if confirmed
+  mods clear [--yes]     Clear mod_ids.txt without a prompt when scripted
 
 Workflow:
   1. ./tmod-workshop.sh init           # Initialize system
@@ -1394,10 +1444,12 @@ Files:
 Examples:
   ./tmod-workshop.sh download          # Download all mods in mod_ids.txt
   ./tmod-workshop.sh sync              # Copy workshop mods to server
+  ./tmod-workshop.sh sync --yes        # Sync mods non-interactively
   ./tmod-workshop.sh list              # Show all downloaded mods
   ./tmod-workshop.sh mods pick         # Open interactive mod toggle menu
   ./tmod-workshop.sh mods enable CalamityMod
   ./tmod-workshop.sh mods disable ThoriumMod
+  ./tmod-workshop.sh archive --yes     # Archive old versions in automation
   ./tmod-workshop.sh status            # Check system configuration
 
 Features:
@@ -1416,9 +1468,9 @@ init_tmod
 
 case "${1:-help}" in
     download)       download_mods ;;
-    sync)           sync_downloaded_mods ;;
+    sync)           shift; workshop_parse_yes_flags "$@"; sync_downloaded_mods ;;
     list)           list_workshop_mods ;;
-    archive)        archive_old_versions ;;
+    archive)        shift; workshop_parse_yes_flags "$@"; archive_old_versions ;;
     cleanup)        cleanup_workshop ;;
     ids)            show_mod_ids ;;
     status)         show_status ;;

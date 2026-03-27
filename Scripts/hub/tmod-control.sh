@@ -1,6 +1,6 @@
 #!/bin/bash
 # tmod-control.sh - Enhanced unified control system with advanced management
-export SCRIPT_VERSION="2.5.0"
+export SCRIPT_VERSION="2.5.2"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Correct path to tmod-core.sh (it's in ../core relative to hub directory)
@@ -500,6 +500,18 @@ _use_fzf_ui() {
     esac
 }
 
+_use_dialog_ui() {
+    local mode="${TMOD_UI_MODE:-auto}"
+    case "$mode" in
+        classic|legacy|plain|fzf) return 1 ;;
+        auto|dialog)
+            [[ -t 0 && -t 1 ]] || return 1
+            command -v dialog >/dev/null 2>&1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 _status_summary_line() {
     local state="OFFLINE"
     is_server_up && state="ONLINE"
@@ -553,17 +565,138 @@ _prompt_add_mods() {
 
     if (( added > 0 )); then
         echo
-        read -p "  Download & sync $added mod(s) now? (yes/no): " -r do_download
-        if [[ "$do_download" == "yes" ]]; then
-            "$ws" download && "$ws" sync
+        if _confirm_action "Mods" "Download and sync $added mod(s) now?"; then
+            "$ws" download && "$ws" sync --yes
         fi
     fi
+}
+
+_menu_choice() {
+    local title="$1"
+    local prompt="$2"
+    local out_var="$3"
+    shift 3
+
+    local -n _out_ref="$out_var"
+    _out_ref=""
+
+    if _use_dialog_ui; then
+        local dialog_prompt
+        dialog_prompt="${prompt}"$'\n\n'"$(_status_summary_line)"
+        local item_count=$(( $# / 2 ))
+        local menu_height=$item_count
+        (( menu_height < 10 )) && menu_height=10
+        (( menu_height > 18 )) && menu_height=18
+
+        local selected
+        selected=$(dialog --clear --stdout \
+            --title "tModLoader / $title" \
+            --cancel-label "Back" \
+            --menu "$dialog_prompt" 22 96 "$menu_height" "$@")
+        local status=$?
+        clear
+        [[ $status -eq 0 ]] || return 1
+        _out_ref="$selected"
+        return 0
+    fi
+
+    local -a tags=()
+    local -a descriptions=()
+    while (( $# >= 2 )); do
+        tags+=("$1")
+        descriptions+=("$2")
+        shift 2
+    done
+
+    while true; do
+        _header "$title"
+        _gap
+        local idx
+        for idx in "${!tags[@]}"; do
+            _item "${tags[$idx]}" "${descriptions[$idx]}"
+        done
+        _gap
+        echo "$_SEP"
+        read -p "  Select: " -r input
+        echo
+
+        case "$input" in
+            $'\033') return 1 ;;
+        esac
+
+        for idx in "${!tags[@]}"; do
+            if [[ "$input" == "${tags[$idx]}" ]]; then
+                _out_ref="$input"
+                return 0
+            fi
+        done
+
+        echo "  Invalid option."
+        sleep 1
+    done
+}
+
+_prompt_text() {
+    local title="$1"
+    local prompt="$2"
+    local out_var="$3"
+    local initial_value="${4:-}"
+    local -n _out_ref="$out_var"
+
+    _out_ref=""
+
+    if _use_dialog_ui; then
+        local input
+        input=$(dialog --clear --stdout \
+            --title "tModLoader / $title" \
+            --inputbox "$prompt" 10 90 "$initial_value")
+        local status=$?
+        clear
+        [[ $status -eq 0 ]] || return 1
+        _out_ref="$input"
+        return 0
+    fi
+
+    read -p "  $prompt" -r _out_ref
+}
+
+_confirm_action() {
+    local title="$1"
+    local prompt="$2"
+    local rendered_prompt
+    rendered_prompt=$(printf '%b' "$prompt")
+
+    if _use_dialog_ui; then
+        dialog --clear --title "tModLoader / $title" --yesno "$rendered_prompt" 10 90
+        local status=$?
+        clear
+        return $status
+    fi
+
+    local reply
+    read -p "  $rendered_prompt [y/N]: " -r reply
+    [[ "$reply" =~ ^([Yy]|[Yy][Ee][Ss])$ ]]
 }
 
 _show_log_tail() {
     local file_path="$1"
     local title="$2"
     local lines="${3:-50}"
+
+    if _use_dialog_ui; then
+        local temp_view
+        temp_view=$(mktemp)
+        if [[ -f "$file_path" ]]; then
+            tail -n "$lines" "$file_path" > "$temp_view"
+        else
+            printf 'No log found: %s\n' "$file_path" > "$temp_view"
+        fi
+        dialog --clear --title "tModLoader / $title" --textbox "$temp_view" 24 110
+        local status=$?
+        rm -f "$temp_view"
+        clear
+        return $status
+    fi
 
     echo "  ── $title ─────────────────────────────────────────"
     if [[ -f "$file_path" ]]; then
@@ -576,6 +709,16 @@ _show_log_tail() {
 _follow_log_file() {
     local file_path="$1"
     local title="$2"
+
+    if _use_dialog_ui; then
+        if [[ -f "$file_path" ]]; then
+            dialog --clear --title "tModLoader / $title" --tailbox "$file_path" 24 110
+        else
+            dialog --clear --title "tModLoader / $title" --msgbox "No log found:\n$file_path" 10 90
+        fi
+        clear
+        return 0
+    fi
 
     echo "  ── Following $title — Ctrl+C to stop ──────────────────────"
     if [[ -f "$file_path" ]]; then
@@ -698,6 +841,26 @@ _pick_index() {
         return 1
     fi
 
+    if _use_dialog_ui; then
+        local -a menu_items=()
+        local idx
+        for idx in "${!_labels_ref[@]}"; do
+            menu_items+=("$idx" "${_labels_ref[$idx]}")
+        done
+
+        local selected
+        selected=$(dialog --clear --stdout \
+            --title "tModLoader / $title" \
+            --cancel-label "Back" \
+            --menu "$prompt"$'\n\n'"$(_status_summary_line)" 22 110 16 \
+            "${menu_items[@]}")
+        local status=$?
+        clear
+        [[ $status -eq 0 ]] || return 1
+        _out_ref="$selected"
+        return 0
+    fi
+
     local query=""
     local input
     local filtered=()
@@ -816,25 +979,19 @@ _unavailable() {
 
 _page_server() {
     while true; do
-        _header "Server"
-
-        _gap
-        _item 1 "Show Status"
-        _gap
-        _item 2 "Start Server"
-        _item 3 "Stop Server"
-        _item 4 "Restart Server"
-        _gap
-        _item 5 "Select Active World"
-        _item 6 "Start with World Select"
-        _item 7 "Create New World"
-        _item 8 "Import World  (from uploaded .wld file)"
-        _gap
-        _back
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
+        local choice
+        if ! _menu_choice "Server" "Choose a server action." choice \
+            "1" "Show Status" \
+            "2" "Start Server" \
+            "3" "Stop Server" \
+            "4" "Restart Server" \
+            "5" "Select Active World" \
+            "6" "Start with World Select" \
+            "7" "Create New World" \
+            "8" "Import World (from uploaded .wld file)" \
+            "0" "Back"; then
+            return
+        fi
         case "$choice" in
             1) quick_status;                       _pause ;;
             2) start_server;                       _pause ;;
@@ -854,71 +1011,45 @@ _page_server() {
 _page_mods() {
     local ws="$SCRIPT_DIR/../steam/tmod-workshop.sh"
     while true; do
-        _header "Mods"
-        _gap
-        _item 1 "Add Mod by URL or ID"
-        _item 2 "Show mod_ids.txt  (queued mods with names)"
-        _item 3 "Clear mod_ids.txt  (fresh start)"
-        _gap
-        _item 4 "Mod Picker  (interactive toggle)"
-        _item 5 "Enable a Mod"
-        _item 6 "Disable a Mod"
-        _item 7 "List Mods  (enabled/disabled)"
-        _gap
-        _item 8  "List Installed Mods"
-        _item 9  "Check for Errors"
-        _gap
-        _item 10 "Workshop Status"
-        _item 11 "List Workshop Downloads"
-        _item 12 "Archive Old Versions"
-        _item 13 "Cleanup Downloads"
-        _gap
-        _item 14 "Mod Configs  (edit per-mod settings)"
-        _gap
-        _back
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
+        local choice
+        if ! _menu_choice "Mods" "Choose a mod or workshop action." choice \
+            "1" "Add Mod by URL or ID" \
+            "2" "Show mod_ids.txt (queued mods with names)" \
+            "3" "Clear mod_ids.txt (fresh start)" \
+            "4" "Mod Picker (interactive toggle)" \
+            "5" "Enable a Mod" \
+            "6" "Disable a Mod" \
+            "7" "List Mods (enabled/disabled)" \
+            "8" "List Installed Mods" \
+            "9" "Check for Errors" \
+            "10" "Workshop Status" \
+            "11" "List Workshop Downloads" \
+            "12" "Archive Old Versions" \
+            "13" "Cleanup Downloads" \
+            "14" "Mod Configs (edit per-mod settings)" \
+            "0" "Back"; then
+            return
+        fi
         case "$choice" in
-            1) if [[ -x "$ws" ]]; then
-                   local _added=0
-                   echo "  Paste Workshop URLs or IDs — blank line when done."
-                   echo "  (Multiple URLs concatenated on one line are fine)"
-                   echo
-                   while true; do
-                       read -p "  URL(s) or ID(s): " -r _input
-                       [[ -z "$_input" ]] && break
-                       # Extract all ?id= values from the line in case URLs were concatenated
-                       local _ids
-                       _ids=$(echo "$_input" | grep -oP '(?<=[?&]id=)[0-9]+')
-                       if [[ -n "$_ids" ]]; then
-                           while IFS= read -r _id; do
-                               "$ws" mods add "$_id" 2>&1 | grep -v "^\[20[0-9][0-9]-" && (( _added++ )) || true
-                           done <<< "$_ids"
-                       else
-                           # Raw numeric ID or unknown format — pass through as-is
-                           "$ws" mods add "$_input" 2>&1 | grep -v "^\[20[0-9][0-9]-" && (( _added++ )) || true
-                       fi
-                   done
-                   if (( _added > 0 )); then
-                       echo
-                       read -p "  Download & sync $_added mod(s) now? (yes/no): " -r _dl
-                       if [[ "$_dl" == "yes" ]]; then
-                           "$ws" download && "$ws" sync
-                       fi
-                   fi
-               else _unavailable "tmod-workshop.sh"; fi; _pause ;;
+            1) if [[ -x "$ws" ]]; then _prompt_add_mods; else _unavailable "tmod-workshop.sh"; fi; _pause ;;
             2) if [[ -x "$ws" ]]; then "$ws" mods ids;      else _unavailable "tmod-workshop.sh"; fi; _pause ;;
             3) if [[ -x "$ws" ]]; then "$ws" mods clear;    else _unavailable "tmod-workshop.sh"; fi; _pause ;;
             4) if [[ -x "$ws" ]]; then "$ws" mods pick;     else _unavailable "tmod-workshop.sh"; fi; _pause ;;
             5) if [[ -x "$ws" ]]; then
-                   read -p "  Mod name (or 'all'): " -r m
-                   if [[ -n "$m" ]]; then "$ws" mods enable "$m"; else echo "  No input."; fi
+                   local m
+                   if _prompt_text "Mods" "Mod name to enable (or 'all'):" m && [[ -n "$m" ]]; then
+                       "$ws" mods enable "$m"
+                   else
+                       echo "  No input."
+                   fi
                else _unavailable "tmod-workshop.sh"; fi; _pause ;;
             6) if [[ -x "$ws" ]]; then
-                   read -p "  Mod name (or 'all'): " -r m
-                   if [[ -n "$m" ]]; then "$ws" mods disable "$m"; else echo "  No input."; fi
+                   local m
+                   if _prompt_text "Mods" "Mod name to disable (or 'all'):" m && [[ -n "$m" ]]; then
+                       "$ws" mods disable "$m"
+                   else
+                       echo "  No input."
+                   fi
                else _unavailable "tmod-workshop.sh"; fi; _pause ;;
             7) if [[ -x "$ws" ]]; then "$ws" mods list;     else _unavailable "tmod-workshop.sh"; fi; _pause ;;
             8) get_mod_list;                                                                           _pause ;;
@@ -990,27 +1121,21 @@ _page_mod_configs() {
 _page_backup() {
     local bs="$SCRIPT_DIR/../backup/tmod-backup.sh"
     while true; do
-        _header "Backup"
-        _gap
-        _item 1 "Backup Status"
-        _gap
-        _item 2 "World Backup"
-        _item 3 "Config Backup"
-        _item 4 "Full Server Backup"
-        _item 5 "Auto Backup  (all three)"
-        _gap
-        _item 6 "List Backups"
-        _item 7 "Restore from Backup"
-        _item 8 "Verify a Backup"
-        _item 9 "Cleanup Old Backups"
-        _gap
-        _item 10 "View Backup Log"
-        _gap
-        _back
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
+        local choice
+        if ! _menu_choice "Backup" "Choose a backup action." choice \
+            "1" "Backup Status" \
+            "2" "World Backup" \
+            "3" "Config Backup" \
+            "4" "Full Server Backup" \
+            "5" "Auto Backup (all three)" \
+            "6" "List Backups" \
+            "7" "Restore from Backup" \
+            "8" "Verify a Backup" \
+            "9" "Cleanup Old Backups" \
+            "10" "View Backup Log" \
+            "0" "Back"; then
+            return
+        fi
         case "$choice" in
             1) if [[ -x "$bs" ]]; then "$bs" status;  else _unavailable "tmod-backup.sh"; fi; _pause ;;
             2) if [[ -x "$bs" ]]; then "$bs" worlds;  else _unavailable "tmod-backup.sh"; fi; _pause ;;
@@ -1018,26 +1143,10 @@ _page_backup() {
             4) if [[ -x "$bs" ]]; then "$bs" full;    else _unavailable "tmod-backup.sh"; fi; _pause ;;
             5) if [[ -x "$bs" ]]; then "$bs" auto;    else _unavailable "tmod-backup.sh"; fi; _pause ;;
             6) if [[ -x "$bs" ]]; then "$bs" list;    else _unavailable "tmod-backup.sh"; fi; _pause ;;
-            7) if [[ -x "$bs" ]]; then
-                   local picked_backup
-                   if _pick_backup_archive "Backup  /  Restore" picked_backup; then
-                       "$bs" restore "$picked_backup"
-                   else
-                       echo "  Cancelled."
-                   fi
-               else _unavailable "tmod-backup.sh"; fi; _pause ;;
-            8) if [[ -x "$bs" ]]; then
-                   local picked_backup
-                   if _pick_backup_archive "Backup  /  Verify" picked_backup; then
-                       "$bs" verify "$picked_backup"
-                   else
-                       echo "  Cancelled."
-                   fi
-               else _unavailable "tmod-backup.sh"; fi; _pause ;;
+            7) if [[ -x "$bs" ]]; then _restore_backup_interactive; else _unavailable "tmod-backup.sh"; fi; _pause ;;
+            8) if [[ -x "$bs" ]]; then _verify_backup_interactive;  else _unavailable "tmod-backup.sh"; fi; _pause ;;
             9)  if [[ -x "$bs" ]]; then "$bs" cleanup; else _unavailable "tmod-backup.sh"; fi; _pause ;;
-            10) echo "  ── Backup Log (last 30 lines) ──────────────────────────────────"
-                if [[ -f "$LOG_DIR/backup.log" ]]; then tail -30 "$LOG_DIR/backup.log"
-                else echo "  No backup log found"; fi; _pause ;;
+            10) _show_log_tail "$LOG_DIR/backup.log" "Backup Log" 30 ;;
             0) return ;;
             $'\033') return ;;
             *) echo "  Invalid option."; sleep 1 ;;
@@ -1049,45 +1158,28 @@ _page_backup() {
 _page_monitoring() {
     local mon="$SCRIPT_DIR/../core/tmod-monitor.sh"
     while true; do
-        _header "Monitoring"
-        _gap
-        _item 1 "Status Dashboard"
-        _item 2 "Health Check  (single pass)"
-        _item 3 "Live Monitor  (Ctrl+C to stop)"
-        _gap
-        _item 4 "Follow Server Log  (live stream, Ctrl+C)"
-        _item 5 "View Server Log  (last 50 lines)"
-        _item 6 "View Monitor Log"
-        _item 7 "View Control Log"
-        _gap
-        _item 8 "Attach to Server Console  (Ctrl+A D to detach)"
-        _gap
-        _back
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
+        local choice
+        if ! _menu_choice "Monitoring" "Choose a monitoring action." choice \
+            "1" "Status Dashboard" \
+            "2" "Health Check (single pass)" \
+            "3" "Live Monitor (Ctrl+C to stop)" \
+            "4" "Follow Server Log (live stream)" \
+            "5" "View Server Log (last 50 lines)" \
+            "6" "View Monitor Log" \
+            "7" "View Control Log" \
+            "8" "Attach to Server Console" \
+            "0" "Back"; then
+            return
+        fi
         case "$choice" in
             1) if [[ -x "$mon" ]]; then "$mon" status;  else _unavailable "tmod-monitor.sh"; fi; _pause ;;
             2) if [[ -x "$mon" ]]; then "$mon" check;   else _unavailable "tmod-monitor.sh"; fi; _pause ;;
             3) if [[ -x "$mon" ]]; then "$mon" monitor; else _unavailable "tmod-monitor.sh"; fi ;;
-            4) echo "  ── Following server.log — Ctrl+C to stop ──────────────────────"
-               if [[ -f "$LOG_DIR/server.log" ]]; then tail -f "$LOG_DIR/server.log"
-               else echo "  No server log found"; fi; _pause ;;
-            5) echo "  ── Server Log (last 50 lines) ──────────────────────────────────"
-               if [[ -f "$LOG_DIR/server.log" ]]; then tail -50 "$LOG_DIR/server.log"
-               else echo "  No server log found"; fi; _pause ;;
+            4) _follow_log_file "$LOG_DIR/server.log" "Server Log" ;;
+            5) _show_log_tail "$LOG_DIR/server.log" "Server Log" 50 ;;
             6) if [[ -x "$mon" ]]; then "$mon" logs;    else _unavailable "tmod-monitor.sh"; fi; _pause ;;
-            7) echo "  ── Control Log (last 30 lines) ─────────────────────────────────"
-               if [[ -f "$MAIN_LOG" ]]; then tail -30 "$MAIN_LOG"
-               else echo "  No control log found"; fi; _pause ;;
-            8) if screen -list 2>/dev/null | grep -q "tmodloader_server"; then
-                   echo "  Attaching to server console — Ctrl+A D to detach..."
-                   sleep 1
-                   screen -r tmodloader_server
-               else
-                   echo "  ❌ No server screen session found (is the server running?)"
-               fi; _pause ;;
+            7) _show_log_tail "$MAIN_LOG" "Control Log" 30 ;;
+            8) _attach_server_console; _pause ;;
             0) return ;;
             $'\033') return ;;
             *) echo "  Invalid option."; sleep 1 ;;
@@ -1110,7 +1202,10 @@ _update_engine() {
         echo "  ⚠️  tModLoader engine downloads require a Steam account that owns Terraria."
         echo "  💡 For a public no-login install, you can also run: make engine-github"
         echo "  💡 Set STEAM_USERNAME in Scripts/env.sh or enter it now."
-        read -r -p "  Steam username: " steam_user
+        if ! _prompt_text "Maintenance" "Steam username:" steam_user; then
+            echo "  Cancelled."
+            return 1
+        fi
         if [[ -z "$steam_user" ]]; then
             echo "  Cancelled."
             return 1
@@ -1123,8 +1218,10 @@ _update_engine() {
 
     if is_server_up; then
         echo "  ⚠️  Server is running. Stop it before updating."
-        read -p "  Stop server and update? (yes/no): " -r confirm
-        [[ "$confirm" != "yes" ]] && { echo "  Cancelled."; return 0; }
+        if ! _confirm_action "Maintenance" "Stop the server and continue with the engine update?"; then
+            echo "  Cancelled."
+            return 0
+        fi
         stop_server
         sleep 2
     fi
@@ -1158,27 +1255,24 @@ _update_engine() {
 _page_maintenance() {
     local diag="$SCRIPT_DIR/../diag/tmod-diagnostics.sh"
     while true; do
-        _header "Maintenance"
-        _gap
-        _item 1 "System Diagnostics"
-        _gap
-        _item 2 "Run All Maintenance Tasks"
-        _item 3 "Update Engine"
-        _gap
-        _item 4 "Emergency Shutdown"
-        _gap
-        _back
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
+        local choice
+        if ! _menu_choice "Maintenance" "Choose a maintenance action." choice \
+            "1" "System Diagnostics" \
+            "2" "Run All Maintenance Tasks" \
+            "3" "Update Engine" \
+            "4" "Emergency Shutdown" \
+            "0" "Back"; then
+            return
+        fi
         case "$choice" in
             1) if [[ -x "$diag" ]]; then "$diag" full; else _unavailable "tmod-diagnostics.sh"; fi; _pause ;;
             2) run_maintenance; _pause ;;
             3) _update_engine; _pause ;;
-            4) echo "  ⚠️  This will force-kill the server immediately."
-               read -p "  Type YES to confirm: " -r confirm
-               [[ "$confirm" == "YES" ]] && emergency_shutdown || echo "  Cancelled."
+            4) if _confirm_action "Maintenance" "Force-kill the server immediately?\n\nThis is only for emergencies."; then
+                   emergency_shutdown
+               else
+                   echo "  Cancelled."
+               fi
                _pause ;;
             0) return ;;
             $'\033') return ;;
@@ -1190,20 +1284,18 @@ _page_maintenance() {
 # ─── Main menu ────────────────────────────────────────────────────────────────
 show_classic_menu() {
     while true; do
-        _header "Main Menu"
-        _gap
-        _item 1 "Server        start / stop / restart / status"
-        _item 2 "Mods          add, enable, manage, workshop"
-        _item 3 "Monitoring    dashboard, logs, console"
-        _gap
-        _item 4 "Backup        create, restore, verify, cleanup"
-        _item 5 "Maintenance   diagnostics, emergency shutdown"
-        _gap
-        _item 0 "Exit"
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
+        local choice
+        if ! _menu_choice "Main Menu" "Choose an area." choice \
+            "1" "Server        start / stop / restart / status" \
+            "2" "Mods          add, enable, manage, workshop" \
+            "3" "Monitoring    dashboard, logs, console" \
+            "4" "Backup        create, restore, verify, cleanup" \
+            "5" "Maintenance   diagnostics, emergency shutdown" \
+            "0" "Exit"; then
+            echo "  Goodbye!"
+            log_control "Control system session ended" "INFO"
+            exit 0
+        fi
         case "$choice" in
             1) _page_server ;;
             2) _page_mods ;;
@@ -1248,13 +1340,27 @@ show_command_palette() {
             "Server / Start with World Select"
             "Server / Create New World"
             "Server / Import World"
-            "Mods / Open Mods Page"
+            "Mods / Add Mod by URL or ID"
+            "Mods / Show queued mod IDs"
+            "Mods / Toggle enabled mods"
             "Mods / Edit Mod Configs"
+            "Mods / List Installed Mods"
+            "Workshop / Status"
             "Workshop / Download Mods"
             "Workshop / Sync Mods"
-            "Monitoring / Open Monitoring Page"
-            "Backup / Open Backup Page"
-            "Maintenance / Open Maintenance Page"
+            "Workshop / List Downloads"
+            "Workshop / Archive Old Versions"
+            "Monitoring / Status Dashboard"
+            "Monitoring / Health Check"
+            "Monitoring / Follow Server Log"
+            "Monitoring / Attach Server Console"
+            "Backup / Status"
+            "Backup / Full Server Backup"
+            "Backup / Restore Backup"
+            "Backup / Verify Backup"
+            "Backup / Cleanup Old Backups"
+            "Maintenance / Run All Maintenance Tasks"
+            "Maintenance / Update Engine"
             "Diagnostics / Full Diagnostics"
             "Logs / View Server Log"
             "Logs / View Control Log"
@@ -1270,16 +1376,30 @@ show_command_palette() {
             "_page_world_picker start"
             "_page_world_creator"
             "_page_world_importer"
-            "_page_mods"
+            "_prompt_add_mods"
+            "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" mods ids"
+            "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" mods pick"
             "_page_mod_configs"
+            "get_mod_list"
+            "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" status"
             "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" download"
             "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" sync"
-            "_page_monitoring"
-            "_page_backup"
-            "_page_maintenance"
+            "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" list"
+            "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" archive"
+            "\"$SCRIPT_DIR/../core/tmod-monitor.sh\" status"
+            "\"$SCRIPT_DIR/../core/tmod-monitor.sh\" check"
+            "_follow_log_file \"$LOG_DIR/server.log\" \"Server Log\""
+            "_attach_server_console"
+            "\"$SCRIPT_DIR/../backup/tmod-backup.sh\" status"
+            "\"$SCRIPT_DIR/../backup/tmod-backup.sh\" full"
+            "_restore_backup_interactive"
+            "_verify_backup_interactive"
+            "\"$SCRIPT_DIR/../backup/tmod-backup.sh\" cleanup"
+            "run_maintenance"
+            "_update_engine"
             "\"$SCRIPT_DIR/../diag/tmod-diagnostics.sh\" full"
-            "if [[ -f \"$LOG_DIR/server.log\" ]]; then tail -50 \"$LOG_DIR/server.log\"; else echo \"  No server log found\"; fi"
-            "if [[ -f \"$MAIN_LOG\" ]]; then tail -30 \"$MAIN_LOG\"; else echo \"  No control log found\"; fi"
+            "_show_log_tail \"$LOG_DIR/server.log\" \"Server Log\" 50"
+            "_show_log_tail \"$MAIN_LOG\" \"Control Log\" 30"
             "show_classic_menu"
             ""
         )
@@ -1292,16 +1412,30 @@ show_command_palette() {
             "page"
             "page"
             "page"
-            "page"
-            "page"
             "pause"
             "pause"
-            "page"
-            "page"
+            "pause"
             "page"
             "pause"
             "pause"
             "pause"
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "page"
+            "page"
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "page"
+            "page"
             "page"
             "exit"
         )
@@ -1373,7 +1507,7 @@ run_maintenance() {
     
     # Task 4: Sync mods
     echo "🔄 [4/5] Syncing mods..."
-    if [[ -x "$SCRIPT_DIR/../steam/tmod-workshop.sh" ]] && "$SCRIPT_DIR/../steam/tmod-workshop.sh" sync >/dev/null 2>&1; then
+    if [[ -x "$SCRIPT_DIR/../steam/tmod-workshop.sh" ]] && "$SCRIPT_DIR/../steam/tmod-workshop.sh" sync --yes >/dev/null 2>&1; then
         echo "    ✅ Mod sync completed"
         ((tasks_completed++))
     else
@@ -1536,9 +1670,9 @@ Server Control:
 
 Workshop Management:
   workshop download     Download mods from Steam Workshop
-  workshop sync         Sync workshop mods to server
+  workshop sync [--yes] Sync workshop mods to server
   workshop list         List downloaded workshop mods with compatibility info
-  workshop archive      Archive old mod versions  
+  workshop archive [--yes] Archive old mod versions
   workshop cleanup      Clean up workshop downloads
   workshop status       Workshop system status
   workshop init         Initialize workshop system
@@ -1554,6 +1688,7 @@ Mod Load Management:
   mods enable  <name>    Enable a mod (or 'all')
   mods disable <name>    Disable a mod (or 'all')
   mods pick              Interactive toggle menu — no file editing needed
+  mods add [--yes] <id>  Add Workshop IDs and auto-clean placeholders if confirmed
 
 Maintenance & Utilities:
   maintenance           Run comprehensive maintenance tasks
@@ -1576,7 +1711,7 @@ Quick Commands:
 
 Examples:
   ./tmod-control.sh start                    # Quick start
-  ./tmod-control.sh workshop sync            # Sync mods from workshop
+  ./tmod-control.sh workshop sync --yes      # Sync mods from workshop
   ./tmod-control.sh mods pick                # Interactive mod toggle menu
   ./tmod-control.sh mods list                # See enabled/disabled status
   ./tmod-control.sh mods enable CalamityMod  # Enable a specific mod
@@ -1590,8 +1725,13 @@ Examples:
 Interactive Mode:
   ./tmod-control.sh interactive
   ./tmod-control.sh interactive classic
+  TMOD_UI_MODE=dialog ./tmod-control.sh interactive
+  TMOD_UI_MODE=fzf ./tmod-control.sh interactive
 
-  The default interactive UI is a command palette with filterable actions.
+  The default interactive UI is a dependency-aware command palette:
+  - fzf is used for searchable pickers when available
+  - dialog is used for boxed menus and log viewers when available
+  - plain Bash menus remain as the fallback
   The classic numbered menu is still available for users who prefer it.
 
 Automation Examples:
@@ -1605,12 +1745,12 @@ Automation Examples:
   0 4 * * 0 $SCRIPT_DIR/tmod-control.sh restart
   
   # Workshop mod sync daily at 6 AM
-  0 6 * * * $SCRIPT_DIR/tmod-control.sh workshop sync
+  0 6 * * * $SCRIPT_DIR/tmod-control.sh workshop sync --yes
 
 
 Features:
   ✅ Unified control of all server operations
-  ✅ Interactive menu with real-time status
+  ✅ Headless-friendly command palette with optional dialog/fzf UI
   ✅ Comprehensive maintenance automation
   ✅ Emergency procedures with safety backups
   ✅ System health monitoring and diagnostics
@@ -1623,6 +1763,8 @@ Features:
 Dependencies:
   - All tmod-* management scripts in same directory
   - Screen for server management
+  - fzf for searchable pickers (optional)
+  - dialog for boxed menus and log viewers (optional)
   - jq for enhanced JSON formatting (optional)
   - Standard GNU utilities (find, tar, gzip, etc.)
 EOF
@@ -1707,13 +1849,13 @@ main() {
         workshop)
             if [[ -x "$SCRIPT_DIR/../steam/tmod-workshop.sh" ]]; then
                 case "${2:-help}" in
-                    download) exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" download ;;
-                    sync)     exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" sync ;;
-                    list)     exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" list ;;
-                    archive)  exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" archive ;;
-                    cleanup)  exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" cleanup ;;
-                    status)   exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" status ;;
-                    init)     exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" init ;;
+                    download) exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" download "${@:3}" ;;
+                    sync)     exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" sync "${@:3}" ;;
+                    list)     exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" list "${@:3}" ;;
+                    archive)  exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" archive "${@:3}" ;;
+                    cleanup)  exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" cleanup "${@:3}" ;;
+                    status)   exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" status "${@:3}" ;;
+                    init)     exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" init "${@:3}" ;;
                     *)        exec "$SCRIPT_DIR/../steam/tmod-workshop.sh" help ;;
                 esac
             else

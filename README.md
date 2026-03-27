@@ -1,7 +1,7 @@
 # tmodloader-server
 
 ![CI](https://github.com/appaKappaK/tmodloader-server/actions/workflows/ci.yml/badge.svg)
-![Version](https://img.shields.io/badge/version-2.5.1-blue)
+![Version](https://img.shields.io/badge/version-2.5.2-blue)
 ![tModLoader](https://img.shields.io/badge/tModLoader-2024.5+-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Linux-orange)
@@ -20,7 +20,7 @@ This edition is built around a self-contained project layout: the server engine,
 
 ## Feature Summary
 
-- Interactive CLI hub for server lifecycle, mods, monitoring, backups, and maintenance
+- Interactive CLI hub for server lifecycle, mods, monitoring, backups, and maintenance, with `dialog`/`fzf` enhancements and plain-Bash fallback
 - Repo-local layout with `Engine/`, `Mods/`, `Worlds/`, `Logs/`, `Backups/`, and `Tools/SteamCMD/`
 - Engine bootstrap via official GitHub release or SteamCMD
 - Steam Workshop tooling for mod download, sync, archive, and cleanup
@@ -43,13 +43,13 @@ Debian / Ubuntu:
 
 ```bash
 sudo apt update -y
-sudo apt install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix
+sudo apt install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix fzf dialog
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix
+sudo dnf install -y git screen curl jq pigz rsync unzip htop ncdu net-tools dos2unix fzf dialog
 ```
 
 ### 2. Bootstrap the Project
@@ -151,6 +151,8 @@ The default interactive UI is a filterable command palette that works over a pla
 bash Scripts/hub/tmod-control.sh interactive classic
 ```
 
+When available, the hub uses `fzf` for searchable pickers and `dialog` for boxed menus and log viewers. You can force a mode with `TMOD_UI_MODE=dialog`, `TMOD_UI_MODE=fzf`, or `TMOD_UI_MODE=plain`.
+
 Main areas exposed through the palette:
 
 - `Server`: start, stop, restart, select world, create world, import world
@@ -173,8 +175,10 @@ bash Scripts/hub/tmod-control.sh status
 ```bash
 bash Scripts/hub/tmod-control.sh workshop download
 bash Scripts/hub/tmod-control.sh workshop sync
+bash Scripts/hub/tmod-control.sh workshop sync --yes
 bash Scripts/hub/tmod-control.sh workshop list
 bash Scripts/hub/tmod-control.sh workshop archive
+bash Scripts/hub/tmod-control.sh workshop archive --yes
 bash Scripts/hub/tmod-control.sh workshop cleanup
 ```
 
@@ -185,6 +189,7 @@ bash Scripts/hub/tmod-control.sh backup worlds
 bash Scripts/hub/tmod-control.sh backup configs
 bash Scripts/hub/tmod-control.sh backup full
 bash Scripts/hub/tmod-control.sh backup auto
+bash Scripts/backup/tmod-backup.sh restore --yes Backups/Worlds/worlds_YYYYMMDD_HHMMSS.tar.gz
 ```
 
 ### Diagnostics Commands
@@ -276,6 +281,22 @@ That keeps the public repo clean while still letting the project behave like a c
 
 ## Changelog
 
+### v2.5.2 — 2026-03-27
+
+**Headless UI**
+- Added a dependency-aware interactive hub that can use `dialog` for boxed menus/log viewers and `fzf` for searchable pickers, while keeping plain-Bash fallback intact.
+- Expanded the command palette into a fuller direct-action launcher instead of mostly routing through submenu pages.
+- Unified page navigation around shared menu and picker helpers for worlds, backups, mod configs, logs, and common prompts.
+
+**Automation & Workflow Fixes**
+- Added `--yes` support to workshop sync, workshop archive, mod-list clearing, and backup restore so scripted flows do not hang on confirmations.
+- Updated maintenance to run workshop sync non-interactively, matching the cron-style examples in the docs.
+- Tightened workshop sync so pre-2023 mod builds are skipped consistently instead of being copied into `Mods/`.
+
+**Backup Safety**
+- Fixed restore correctness by switching rsync-based restore paths to checksum mode.
+- Fixed same-second backup filename collisions so pre-restore safety backups cannot overwrite the archive you are trying to restore.
+
 ### v2.5.1 — 2026-03-27
 
 **Portable/Public Release**
@@ -320,7 +341,7 @@ Inherited from the original `tmodloaderserver` line before the portable fork bec
 
 ## Releases
 
-No GitHub release is published yet, but the current documented state of the public portable edition is `v2.5.1`.
+No GitHub release is published yet, but the current documented state of the public portable edition is `v2.5.2`.
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # tmod-backup.sh - Enhanced backup system with compression and integrity checking
-export SCRIPT_VERSION="2.5.0"
+export SCRIPT_VERSION="2.5.2"
 
 # Get the script directory and find the core script - FIXED
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,6 +26,8 @@ WORLD_BACKUP_DIR="$BACKUP_ROOT/Worlds"
 CONFIG_BACKUP_DIR="$BACKUP_ROOT/Configs"
 FULL_BACKUP_DIR="$BACKUP_ROOT/Full"
 TEMP_DIR="/tmp/tmod_backup"
+BACKUP_ASSUME_YES=0
+RESTORE_TARGET=""
 
 # Retention policies
 WORLD_RETENTION_DAYS=30
@@ -58,6 +60,40 @@ log_backup() {
         gzip "$LOG_DIR/backup.log.old"
         touch "$LOG_DIR/backup.log"
         log_backup "Backup log rotated" "INFO"
+    fi
+}
+
+parse_restore_args() {
+    BACKUP_ASSUME_YES=0
+    RESTORE_TARGET=""
+
+    while (( $# > 0 )); do
+        case "$1" in
+            -y|--yes|--force)
+                BACKUP_ASSUME_YES=1
+                ;;
+            --)
+                ;;
+            -*)
+                echo "❌ Unknown restore option: $1"
+                return 1
+                ;;
+            *)
+                if [[ -z "$RESTORE_TARGET" ]]; then
+                    RESTORE_TARGET="$1"
+                else
+                    echo "❌ Unexpected extra restore argument: $1"
+                    return 1
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    if [[ -z "$RESTORE_TARGET" ]]; then
+        echo "❌ Error: Missing backup file"
+        echo "Usage: $0 restore [--yes] <backup_file>"
+        return 1
     fi
 }
 
@@ -101,15 +137,29 @@ calculate_backup_stats() {
     echo "$duration $size_human $size_bytes"
 }
 
+next_backup_name() {
+    local backup_dir="$1"
+    local prefix="$2"
+    local timestamp
+    timestamp=$(date +"%Y%m%d_%H%M%S")
+
+    local candidate="${prefix}_${timestamp}"
+    local suffix=0
+    while [[ -e "$backup_dir/${candidate}.tar.gz" || -e "$TEMP_DIR/${candidate}.tar" ]]; do
+        ((suffix++))
+        candidate="${prefix}_${timestamp}_${suffix}"
+    done
+
+    echo "$candidate"
+}
+
 # Enhanced world backup with integrity checking
 backup_world() {
     log_backup "Starting enhanced world backup..." "INFO"
     local start_time
     start_time=$(date +%s)
-    local timestamp
-    timestamp=$(date +"%Y%m%d_%H%M%S")
     local backup_name
-    backup_name="worlds_$timestamp"
+    backup_name=$(next_backup_name "$WORLD_BACKUP_DIR" "worlds")
     local temp_archive
     temp_archive="$TEMP_DIR/$backup_name.tar"
     local final_archive
@@ -165,10 +215,8 @@ backup_config() {
     log_backup "Starting enhanced config backup..." "INFO"
     local start_time
     start_time=$(date +%s)
-    local timestamp
-    timestamp=$(date +"%Y%m%d_%H%M%S")
     local backup_name
-    backup_name="configs_$timestamp"
+    backup_name=$(next_backup_name "$CONFIG_BACKUP_DIR" "configs")
     local temp_archive
     temp_archive="$TEMP_DIR/$backup_name.tar"
     local final_archive
@@ -237,10 +285,8 @@ backup_full() {
     log_backup "Starting enhanced full server backup..." "INFO"
     local start_time
     start_time=$(date +%s)
-    local timestamp
-    timestamp=$(date +"%Y%m%d_%H%M%S")
     local backup_name
-    backup_name="full_$timestamp"
+    backup_name=$(next_backup_name "$FULL_BACKUP_DIR" "full")
     local temp_archive
     temp_archive="$TEMP_DIR/$backup_name.tar"
     local final_archive
@@ -664,10 +710,14 @@ restore_backup() {
     echo
     echo "⚠️ WARNING: Current $backup_type data will be replaced!"
     echo
-    read -p "Are you absolutely sure? Type 'yes' to continue: " -r
-    if [[ ! "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
-        echo "Restore cancelled for safety."
-        return 0
+    if (( BACKUP_ASSUME_YES )); then
+        echo "ℹ️ Auto-confirm enabled — proceeding with restore"
+    else
+        read -p "Are you absolutely sure? Type 'yes' to continue: " -r
+        if [[ ! "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+            echo "Restore cancelled for safety."
+            return 0
+        fi
     fi
     
     # Create pre-restore backup
@@ -700,7 +750,7 @@ restore_backup() {
         case "$backup_type" in
             worlds)
                 if command -v rsync >/dev/null; then
-                    rsync -av --delete "$temp_extract/Worlds/" "$BASE_DIR/Worlds/"
+                    rsync -avc --delete "$temp_extract/Worlds/" "$BASE_DIR/Worlds/"
                 else
                     rm -rf "$BASE_DIR/Worlds"
                     mv "$temp_extract/Worlds" "$BASE_DIR/"
@@ -714,7 +764,7 @@ restore_backup() {
                         "$config_item" "$BASE_DIR" 2>/dev/null || echo "${config_item#"$BASE_DIR"/}")
                     if [[ -e "$temp_extract/$relative_path" ]]; then
                         if command -v rsync >/dev/null; then
-                            rsync -av "$temp_extract/$relative_path" "$config_item"
+                            rsync -avc "$temp_extract/$relative_path" "$config_item"
                         else
                             cp -rf "$temp_extract/$relative_path" "$config_item"
                         fi
@@ -725,7 +775,7 @@ restore_backup() {
             full)
                 echo "⚠️ Full restore requires server to be offline"
                 if command -v rsync >/dev/null; then
-                    rsync -av --exclude="Logs/" --exclude="Backups/" "$temp_extract/$(basename "$BASE_DIR")/" "$BASE_DIR/"
+                    rsync -avc --exclude="Logs/" --exclude="Backups/" "$temp_extract/$(basename "$BASE_DIR")/" "$BASE_DIR/"
                 else
                     cp -rf "$temp_extract/$(basename "$BASE_DIR")"/* "$BASE_DIR/"
                 fi
@@ -768,7 +818,7 @@ Commands:
   list [type]         List all backups with verification status
                       Types: worlds, configs, full, all (default)
   verify <file>       Verify backup integrity using checksums
-  restore <file>      Safely restore from backup (with pre-restore backup)
+  restore [--yes] <file>  Safely restore from backup (with pre-restore backup)
   help                Show this help message
 
 Examples:
@@ -777,6 +827,7 @@ Examples:
   ./tmod-backup.sh list worlds               # List world backups
   ./tmod-backup.sh verify worlds_20250101_120000.tar.gz
   ./tmod-backup.sh restore full_20250101_120000.tar.gz
+  ./tmod-backup.sh restore --yes worlds_20250101_120000.tar.gz
 
 Retention Policies:
   🌍 Worlds: ${WORLD_RETENTION_DAYS} days
@@ -833,12 +884,11 @@ case "${1:-help}" in
             exit 1
         fi
         verify_backup "$2" ;;
-    restore)    
-        if [[ -z "${2:-}" ]]; then
-            echo "❌ Error: Missing backup file"
-            echo "Usage: $0 restore <backup_file>"
+    restore)
+        shift
+        if ! parse_restore_args "$@"; then
             exit 1
         fi
-        restore_backup "$2" ;;
+        restore_backup "$RESTORE_TARGET" ;;
     help|*)     show_help ;;
 esac
