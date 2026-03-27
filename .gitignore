@@ -13,6 +13,13 @@
 /Scripts/env.sh
 /Scripts/steam/mod_ids.txt
 
+# Local testing workspace
+/Testing/local/
+/Testing/output/
+/Testing/tmp/
+/Testing/*.log
+/Testing/*.tmp
+
 # Temporary and backup files
 *.bak
 *.old
