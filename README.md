@@ -1,13 +1,22 @@
-# tModLoader Server Portable
+# tmodloader-server
 
-![Version](https://img.shields.io/badge/version-2.5.0-blue)
+![CI](https://github.com/appaKappaK/tmodloader-server/actions/workflows/ci.yml/badge.svg)
+![Version](https://img.shields.io/badge/version-2.5.1-blue)
 ![tModLoader](https://img.shields.io/badge/tModLoader-2024.5+-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Linux-orange)
+![Portable](https://img.shields.io/badge/layout-portable-success)
 
 A self-contained tModLoader server toolkit for Linux with Steam Workshop integration, automated backups, world management, mod config editing, diagnostics, and a single interactive CLI menu.
 
 Everything lives inside the project folder by default: engine files, worlds, mods, logs, backups, and even SteamCMD. That makes this edition easier to publish, clone, move, test, and run on a fresh machine without rewriting hardcoded paths.
+
+## Highlights
+
+- Fully portable project-root layout with repo-local `Engine/`, `Worlds/`, `Mods/`, `Logs/`, and `Backups/`
+- Local SteamCMD bootstrap via `make steamcmd-local`
+- Interactive CLI for server control, workshop sync, world management, backups, and diagnostics
+- Public-repo-friendly defaults that keep runtime data and local config out of git
 
 ## Why This Version
 
@@ -335,6 +344,19 @@ Optional at `Configs/workshop_map.json`. Maps mod names to Workshop IDs for use 
 
 ## 📝 Changelog
 
+### v2.5.1 — 2026-03-27
+
+**Polish**
+- Added GitHub community health files and issue/PR templates.
+- Added CI workflow for shell syntax checks and setup smoke tests.
+- Updated the public README header, badges, and project framing for the renamed `tmodloader-server` repo.
+
+**Bug Fixes**
+- Fixed full backup and full restore to respect the capitalized `Logs/` and `Backups/` layout.
+- Fixed diagnostics `auto_fix` to recreate the actual repo directory structure instead of legacy lowercase paths.
+- Fixed monitor process detection so monitoring and health checks agree with the server start mode.
+- Fixed `./tmod-control.sh diagnostics` to run the full diagnostics script instead of the lightweight inline summary.
+
 ### Portable Edition Refresh — 2026-03-27
 
 **Portable Layout**
@@ -359,6 +381,10 @@ Optional at `Configs/workshop_map.json`. Maps mod names to Workshop IDs for use 
 Issues, feature requests, and pull requests are welcome.
 
 See `CONTRIBUTING.md` for contribution guidelines and `SECURITY.md` for responsible disclosure.
+
+## 📦 Releases
+
+No GitHub release is published yet, but the current documented state of the portable edition is `v2.5.1`.
 
 ## 🧹 Git Hygiene
 

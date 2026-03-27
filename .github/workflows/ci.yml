@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  shell-and-setup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Shell syntax checks
+        run: |
+          bash -n Scripts/core/*.sh \
+            Scripts/hub/*.sh \
+            Scripts/steam/*.sh \
+            Scripts/backup/*.sh \
+            Scripts/diag/*.sh
+
+      - name: Make help
+        run: make help
+
+      - name: Setup smoke test
+        run: make setup
