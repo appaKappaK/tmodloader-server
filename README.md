@@ -145,7 +145,13 @@ Everything above is expected to live inside the project by default. That is the 
 bash Scripts/hub/tmod-control.sh
 ```
 
-Main sections:
+The default interactive UI is a filterable command palette that works over a plain SSH terminal. If you prefer the old numbered layout, you can still open it with:
+
+```bash
+bash Scripts/hub/tmod-control.sh interactive classic
+```
+
+Main areas exposed through the palette:
 
 - `Server`: start, stop, restart, select world, create world, import world
 - `Mods`: add by Workshop URL or ID, toggle enabled mods, inspect downloads, edit mod configs

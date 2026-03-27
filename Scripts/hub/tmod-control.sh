@@ -186,80 +186,56 @@ quick_status() {
 _page_world_picker() {
     local and_start="${1:-}"
     local worlds_dir="$BASE_DIR/Worlds"
+    local title="Server  /  Select World"
+    [[ "$and_start" == "start" ]] && title="Server  /  Select World & Start"
 
-    while true; do
-        local title="Server  /  Select World"
-        [[ "$and_start" == "start" ]] && title="Server  /  Select World & Start"
+    local world_files=()
+    mapfile -t world_files < <(find "$worlds_dir" -maxdepth 1 -name "*.wld" 2>/dev/null | sort)
+
+    if [[ ${#world_files[@]} -eq 0 ]]; then
         _header "$title"
         _gap
+        echo "  No worlds found in $worlds_dir"
+        echo "  Use 'Create New World' to generate one first."
+        _pause
+        return
+    fi
 
-        local world_files=()
-        mapfile -t world_files < <(find "$worlds_dir" -maxdepth 1 -name "*.wld" 2>/dev/null | sort)
+    local active_world
+    active_world=$(basename "$(server_config_get "world" "" 2>/dev/null)" .wld 2>/dev/null)
 
-        if [[ ${#world_files[@]} -eq 0 ]]; then
-            echo "  No worlds found in $worlds_dir"
-            echo "  Use 'Create New World' to generate one first."
-            _gap
-            _back
-            _gap
-            echo "$_SEP"
-            read -p "  Select: " -r _
-            return
-        fi
-
-        # Current active world from serverconfig.txt
-        local active_world
-        active_world=$(basename "$(server_config_get "world" "" 2>/dev/null)" .wld 2>/dev/null)
-
-        # Print column header
-        printf "  %4s  %-28s  %6s  %-16s\n" "  #" "Name" "Size" "Last Modified"
-        echo "  ────  ────────────────────────────  ──────  ────────────────"
-
-        local i=1
-        for wld in "${world_files[@]}"; do
-            local name size mtime marker=""
-            name=$(basename "$wld" .wld)
-            size=$(du -sh "$wld" 2>/dev/null | cut -f1)
-            mtime=$(date -r "$wld" '+%Y-%m-%d %H:%M' 2>/dev/null \
-                 || stat -c '%y' "$wld" 2>/dev/null | cut -c1-16)
-            [[ "$name" == "$active_world" ]] && marker="  ◄ active"
-            printf "  %3d)  %-28s  %6s  %s%s\n" "$i" "$name" "$size" "$mtime" "$marker"
-            (( i++ ))
-        done
-
-        _gap
-        _back
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
-
-        if [[ "$choice" == "0" || "$choice" == $'\033' ]]; then
-            return
-        fi
-
-        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#world_files[@]} )); then
-            local selected="${world_files[$((choice-1))]}"
-            local selected_name
-            selected_name=$(basename "$selected" .wld)
-
-            server_config_set "world"     "$BASE_DIR/Worlds/${selected_name}.wld"
-            server_config_set "worldname" "$selected_name"
-
-            echo "  ✅ Active world set to: $selected_name"
-            log_control "Active world changed to: $selected_name" "INFO"
-
-            if [[ "$and_start" == "start" ]]; then
-                echo
-                start_server
-            fi
-            _pause
-            return
-        else
-            echo "  Invalid option."
-            sleep 1
-        fi
+    local -a labels=()
+    local wld
+    for wld in "${world_files[@]}"; do
+        local name size mtime marker=""
+        name=$(basename "$wld" .wld)
+        size=$(du -sh "$wld" 2>/dev/null | cut -f1)
+        mtime=$(date -r "$wld" '+%Y-%m-%d %H:%M' 2>/dev/null \
+             || stat -c '%y' "$wld" 2>/dev/null | cut -c1-16)
+        [[ "$name" == "$active_world" ]] && marker="  ◄ active"
+        labels+=("$(printf '%-28s  %6s  %s%s' "$name" "$size" "$mtime" "$marker")")
     done
+
+    local picked_idx
+    if ! _pick_index "$title" "Select world" labels picked_idx; then
+        return
+    fi
+
+    local selected="${world_files[$picked_idx]}"
+    local selected_name
+    selected_name=$(basename "$selected" .wld)
+
+    server_config_set "world"     "$BASE_DIR/Worlds/${selected_name}.wld"
+    server_config_set "worldname" "$selected_name"
+
+    echo "  ✅ Active world set to: $selected_name"
+    log_control "Active world changed to: $selected_name" "INFO"
+
+    if [[ "$and_start" == "start" ]]; then
+        echo
+        start_server
+    fi
+    _pause
 }
 
 # World importer — copy a pre-uploaded .wld into Worlds/, rename, set active
@@ -320,8 +296,8 @@ _page_world_importer() {
     read -p "  Set '$new_name' as active world? (yes/no): " -r set_active
     echo
     if [[ "$set_active" == "yes" ]]; then
-        _set_config "world"     "$BASE_DIR/Worlds/${new_name}.wld"
-        _set_config "worldname" "$new_name"
+        server_config_set "world"     "$BASE_DIR/Worlds/${new_name}.wld"
+        server_config_set "worldname" "$new_name"
         echo "  ✅ Active world set to: $new_name"
         log_control "Active world set to: $new_name" "INFO"
         echo
@@ -495,8 +471,8 @@ _page_world_creator() {
         read -p "  Set '$world_name' as active world? (yes/no): " -r set_active
         echo
         if [[ "$set_active" == "yes" ]]; then
-            _set_config "world"     "$BASE_DIR/Worlds/${world_name}.wld"
-            _set_config "worldname" "$world_name"
+            server_config_set "world"     "$BASE_DIR/Worlds/${world_name}.wld"
+            server_config_set "worldname" "$world_name"
             echo "  ✅ Active world set to: $world_name"
             log_control "Active world set to: $world_name" "INFO"
         fi
@@ -511,6 +487,113 @@ _page_world_creator() {
 
 # ─── Shared UI helpers ────────────────────────────────────────────────────────
 _SEP="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+_use_fzf_ui() {
+    local mode="${TMOD_UI_MODE:-auto}"
+    case "$mode" in
+        classic|legacy|plain) return 1 ;;
+        auto|fzf)
+            [[ -t 0 && -t 1 ]] || return 1
+            command -v fzf >/dev/null 2>&1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+_status_summary_line() {
+    local state="OFFLINE"
+    is_server_up && state="ONLINE"
+
+    local mod_count
+    mod_count=$(get_mod_list | wc -l)
+
+    local active_world
+    active_world=$(basename "$(server_config_get "world" "" 2>/dev/null)" .wld 2>/dev/null)
+    [[ -z "$active_world" ]] && active_world="none"
+
+    local disk_pct
+    disk_pct=$(df "$BASE_DIR" | awk 'NR==2 {print $5}')
+
+    local world_backups=0
+    if [[ -d "$BASE_DIR/Backups/Worlds" ]]; then
+        world_backups=$(find "$BASE_DIR/Backups/Worlds" -name "worlds_*.tar.gz" 2>/dev/null | wc -l)
+    fi
+
+    printf 'State: %s | World: %s | Mods: %s | World Backups: %s | Disk: %s' \
+        "$state" "$active_world" "$mod_count" "$world_backups" "$disk_pct"
+}
+
+_prompt_add_mods() {
+    local ws="$SCRIPT_DIR/../steam/tmod-workshop.sh"
+    local added=0
+
+    if [[ ! -x "$ws" ]]; then
+        _unavailable "tmod-workshop.sh"
+        return 1
+    fi
+
+    echo "  Paste Workshop URLs or IDs — blank line when done."
+    echo "  (Multiple URLs concatenated on one line are fine)"
+    echo
+
+    while true; do
+        local input ids
+        read -p "  URL(s) or ID(s): " -r input
+        [[ -z "$input" ]] && break
+
+        ids=$(echo "$input" | grep -oP '(?<=[?&]id=)[0-9]+')
+        if [[ -n "$ids" ]]; then
+            while IFS= read -r id; do
+                "$ws" mods add "$id" 2>&1 | grep -v "^\[20[0-9][0-9]-" && (( added++ )) || true
+            done <<< "$ids"
+        else
+            "$ws" mods add "$input" 2>&1 | grep -v "^\[20[0-9][0-9]-" && (( added++ )) || true
+        fi
+    done
+
+    if (( added > 0 )); then
+        echo
+        read -p "  Download & sync $added mod(s) now? (yes/no): " -r do_download
+        if [[ "$do_download" == "yes" ]]; then
+            "$ws" download && "$ws" sync
+        fi
+    fi
+}
+
+_show_log_tail() {
+    local file_path="$1"
+    local title="$2"
+    local lines="${3:-50}"
+
+    echo "  ── $title ─────────────────────────────────────────"
+    if [[ -f "$file_path" ]]; then
+        tail -n "$lines" "$file_path"
+    else
+        echo "  No log found: $file_path"
+    fi
+}
+
+_follow_log_file() {
+    local file_path="$1"
+    local title="$2"
+
+    echo "  ── Following $title — Ctrl+C to stop ──────────────────────"
+    if [[ -f "$file_path" ]]; then
+        tail -f "$file_path"
+    else
+        echo "  No log found: $file_path"
+    fi
+}
+
+_attach_server_console() {
+    if screen -list 2>/dev/null | grep -q "tmodloader_server"; then
+        echo "  Attaching to server console — Ctrl+A D to detach..."
+        sleep 1
+        screen -r tmodloader_server
+    else
+        echo "  ❌ No server screen session found (is the server running?)"
+    fi
+}
 
 _status_bar() {
     # ── Line 1: server state ───────────────────────────────────────────────────
@@ -562,7 +645,7 @@ _status_bar() {
     [[ -z "$mods_size" ]] && mods_size="0B"
     worlds_size=$(du -sh "$BASE_DIR/Worlds" 2>/dev/null | cut -f1)
     [[ -z "$worlds_size" ]] && worlds_size="0B"
-    active_world=$(basename "$(_get_config "world" 2>/dev/null)" .wld 2>/dev/null)
+    active_world=$(basename "$(server_config_get "world" "" 2>/dev/null)" .wld 2>/dev/null)
 
     local world_label="🌍 no world set"
     [[ -n "$active_world" ]] && world_label="🌍 ${active_world}"
@@ -583,6 +666,146 @@ _item()  { printf "  %2s)  %s\n" "$1" "$2"; }
 _gap()   { echo; }
 _pause() { echo; read -p "  Press Enter to continue..." -r; }
 _back()  { _item 0 "← Back"; }
+
+_pick_index() {
+    local title="$1"
+    local prompt="$2"
+    local labels_name="$3"
+    local out_var="$4"
+    local -n _labels_ref="$labels_name"
+    local -n _out_ref="$out_var"
+
+    _out_ref=""
+    (( ${#_labels_ref[@]} > 0 )) || return 1
+
+    if _use_fzf_ui; then
+        local selected
+        selected=$(printf '%s\n' "${_labels_ref[@]}" \
+            | fzf \
+                --height=80% \
+                --layout=reverse \
+                --border \
+                --prompt="${prompt}> " \
+                --header="$title")
+        [[ -z "$selected" ]] && return 1
+        local idx
+        for idx in "${!_labels_ref[@]}"; do
+            if [[ "${_labels_ref[$idx]}" == "$selected" ]]; then
+                _out_ref="$idx"
+                return 0
+            fi
+        done
+        return 1
+    fi
+
+    local query=""
+    local input
+    local filtered=()
+
+    while true; do
+        _header "$title"
+        [[ -n "$query" ]] && { echo "  Filter: $query"; _gap; }
+
+        filtered=()
+        local idx
+        for idx in "${!_labels_ref[@]}"; do
+            local label_lc="${_labels_ref[$idx],,}"
+            local query_lc="${query,,}"
+            if [[ -z "$query" || "$label_lc" == *"$query_lc"* ]]; then
+                filtered+=("$idx")
+            fi
+        done
+
+        if (( ${#filtered[@]} == 0 )); then
+            echo "  No matches."
+        else
+            local shown=0
+            local actual_idx
+            for actual_idx in "${filtered[@]}"; do
+                printf "  %2d)  %s\n" "$((shown + 1))" "${_labels_ref[$actual_idx]}"
+                (( shown++ ))
+                if (( shown >= 20 )) && (( ${#filtered[@]} > shown )); then
+                    echo "  … refine your filter to narrow the list"
+                    break
+                fi
+            done
+        fi
+
+        _gap
+        echo "$_SEP"
+        read -p "  $prompt (number, text filter, / clear, 0 cancel): " -r input
+        echo
+
+        case "$input" in
+            0|$'\033') return 1 ;;
+            /) query="" ;;
+            "")
+                if (( ${#filtered[@]} == 1 )); then
+                    _out_ref="${filtered[0]}"
+                    return 0
+                fi
+                ;;
+            *)
+                if [[ "$input" =~ ^[0-9]+$ ]] && (( input >= 1 && input <= ${#filtered[@]} )); then
+                    _out_ref="${filtered[$((input - 1))]}"
+                    return 0
+                else
+                    query="$input"
+                fi
+                ;;
+        esac
+    done
+}
+
+_pick_backup_archive() {
+    local title="$1"
+    local out_var="$2"
+    local -n _out_ref="$out_var"
+    local backup_root="$BASE_DIR/Backups"
+    local -a all_backups=()
+    local -a labels=()
+
+    mapfile -t all_backups < <(
+        find "$backup_root" -maxdepth 2 -name "*.tar.gz" 2>/dev/null \
+            | sort -t/ -k1,1r -k2,2r
+    )
+
+    if (( ${#all_backups[@]} == 0 )); then
+        echo "  No backups found."
+        return 1
+    fi
+
+    local f
+    for f in "${all_backups[@]}"; do
+        local sz rel
+        sz=$(du -h "$f" 2>/dev/null | cut -f1)
+        rel="${f#"$backup_root"/}"
+        labels+=("$(printf '%-48s  %6s' "$rel" "$sz")")
+    done
+
+    local picked_idx
+    if ! _pick_index "$title" "Select backup" labels picked_idx; then
+        return 1
+    fi
+
+    _out_ref="${all_backups[$picked_idx]}"
+}
+
+_restore_backup_interactive() {
+    local bs="$SCRIPT_DIR/../backup/tmod-backup.sh"
+    local picked
+    if _pick_backup_archive "Restore Backup" picked; then
+        "$bs" restore "$picked"
+    fi
+}
+
+_verify_backup_interactive() {
+    local bs="$SCRIPT_DIR/../backup/tmod-backup.sh"
+    local picked
+    if _pick_backup_archive "Verify Backup" picked; then
+        "$bs" verify "$picked"
+    fi
+}
 
 _unavailable() {
     echo "  ❌ Script not available: $1"
@@ -741,47 +964,26 @@ _page_mod_configs() {
         if [[ ${#cfg_files[@]} -eq 0 ]]; then
             echo "  No config files found under:"
             echo "  $BASE_DIR"
-            _gap
-            _back
-            _gap
-            echo "$_SEP"
-            read -p "  Select: " -r choice
-            echo
-            case "$choice" in
-                0|$'\033') return ;;
-                *) ;;
-            esac
-            continue
+            _pause
+            return
         fi
 
-        local i=1
+        local -a labels=()
+        local f
         for f in "${cfg_files[@]}"; do
             local relpath size mtime
             relpath="${f#"$BASE_DIR"/}"
             size=$(du -sh "$f" 2>/dev/null | cut -f1)
             mtime=$(stat -c '%y' "$f" 2>/dev/null | cut -d. -f1)
-            _item "$i" "$(printf '%-48s  %4s  %s' "$relpath" "$size" "$mtime")"
-            (( i++ ))
+            labels+=("$(printf '%-48s  %4s  %s' "$relpath" "$size" "$mtime")")
         done
 
-        _gap
-        _back
-        _gap
-        echo "$_SEP"
-        read -p "  Select: " -r choice
-        echo
+        local picked_idx
+        if ! _pick_index "Mod Configs" "Select config" labels picked_idx; then
+            return
+        fi
 
-        case "$choice" in
-            0|$'\033') return ;;
-            '')  ;;
-            *)
-                if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#cfg_files[@]} )); then
-                    nano "${cfg_files[$(( choice - 1 ))]}"
-                else
-                    echo "  Invalid option."; sleep 1
-                fi
-                ;;
-        esac
+        nano "${cfg_files[$picked_idx]}"
     done
 }
 
@@ -817,60 +1019,19 @@ _page_backup() {
             5) if [[ -x "$bs" ]]; then "$bs" auto;    else _unavailable "tmod-backup.sh"; fi; _pause ;;
             6) if [[ -x "$bs" ]]; then "$bs" list;    else _unavailable "tmod-backup.sh"; fi; _pause ;;
             7) if [[ -x "$bs" ]]; then
-                   # Build a flat list of all backup archives
-                   local backup_root="$BASE_DIR/Backups"
-                   local -a all_backups=()
-                   mapfile -t all_backups < <(
-                       find "$backup_root" -maxdepth 2 -name "*.tar.gz" 2>/dev/null \
-                           | sort -t/ -k1,1r -k2,2r
-                   )
-                   if (( ${#all_backups[@]} == 0 )); then
-                       echo "  No backups found."
+                   local picked_backup
+                   if _pick_backup_archive "Backup  /  Restore" picked_backup; then
+                       "$bs" restore "$picked_backup"
                    else
-                       echo "  Available backups:"
-                       _gap
-                       local i=1
-                       for f in "${all_backups[@]}"; do
-                           local sz
-                           sz=$(du -h "$f" 2>/dev/null | cut -f1)
-                           printf "  %3d)  %-50s  %s\n" "$i" "$(basename "$f")" "$sz"
-                           (( i++ ))
-                       done
-                       _gap
-                       read -p "  Select backup to restore (0 to cancel): " -r _pick
-                       if [[ "$_pick" =~ ^[0-9]+$ ]] && (( _pick >= 1 && _pick <= ${#all_backups[@]} )); then
-                           "$bs" restore "${all_backups[$(( _pick - 1 ))]}"
-                       else
-                           echo "  Cancelled."
-                       fi
+                       echo "  Cancelled."
                    fi
                else _unavailable "tmod-backup.sh"; fi; _pause ;;
             8) if [[ -x "$bs" ]]; then
-                   local backup_root="$BASE_DIR/Backups"
-                   local -a all_backups=()
-                   mapfile -t all_backups < <(
-                       find "$backup_root" -maxdepth 2 -name "*.tar.gz" 2>/dev/null \
-                           | sort -t/ -k1,1r -k2,2r
-                   )
-                   if (( ${#all_backups[@]} == 0 )); then
-                       echo "  No backups found."
+                   local picked_backup
+                   if _pick_backup_archive "Backup  /  Verify" picked_backup; then
+                       "$bs" verify "$picked_backup"
                    else
-                       echo "  Available backups:"
-                       _gap
-                       local i=1
-                       for f in "${all_backups[@]}"; do
-                           local sz
-                           sz=$(du -h "$f" 2>/dev/null | cut -f1)
-                           printf "  %3d)  %-50s  %s\n" "$i" "$(basename "$f")" "$sz"
-                           (( i++ ))
-                       done
-                       _gap
-                       read -p "  Select backup to verify (0 to cancel): " -r _pick
-                       if [[ "$_pick" =~ ^[0-9]+$ ]] && (( _pick >= 1 && _pick <= ${#all_backups[@]} )); then
-                           "$bs" verify "${all_backups[$(( _pick - 1 ))]}"
-                       else
-                           echo "  Cancelled."
-                       fi
+                       echo "  Cancelled."
                    fi
                else _unavailable "tmod-backup.sh"; fi; _pause ;;
             9)  if [[ -x "$bs" ]]; then "$bs" cleanup; else _unavailable "tmod-backup.sh"; fi; _pause ;;
@@ -1027,7 +1188,7 @@ _page_maintenance() {
 }
 
 # ─── Main menu ────────────────────────────────────────────────────────────────
-show_interactive_menu() {
+show_classic_menu() {
     while true; do
         _header "Main Menu"
         _gap
@@ -1054,6 +1215,116 @@ show_interactive_menu() {
             *) echo "  Invalid option."; sleep 1 ;;
         esac
     done
+}
+
+_run_palette_action() {
+    local command="$1"
+    local mode="$2"
+
+    case "$mode" in
+        page)
+            eval "$command"
+            ;;
+        pause)
+            eval "$command"
+            _pause
+            ;;
+        exit)
+            echo "  Goodbye!"
+            log_control "Control system session ended" "INFO"
+            exit 0
+            ;;
+    esac
+}
+
+show_command_palette() {
+    while true; do
+        local -a labels=(
+            "Server / Show Status"
+            "Server / Start Server"
+            "Server / Stop Server"
+            "Server / Restart Server"
+            "Server / Select Active World"
+            "Server / Start with World Select"
+            "Server / Create New World"
+            "Server / Import World"
+            "Mods / Open Mods Page"
+            "Mods / Edit Mod Configs"
+            "Workshop / Download Mods"
+            "Workshop / Sync Mods"
+            "Monitoring / Open Monitoring Page"
+            "Backup / Open Backup Page"
+            "Maintenance / Open Maintenance Page"
+            "Diagnostics / Full Diagnostics"
+            "Logs / View Server Log"
+            "Logs / View Control Log"
+            "UI / Open Classic Menu"
+            "Exit"
+        )
+        local -a commands=(
+            "quick_status"
+            "start_server"
+            "stop_server"
+            "restart_server"
+            "_page_world_picker"
+            "_page_world_picker start"
+            "_page_world_creator"
+            "_page_world_importer"
+            "_page_mods"
+            "_page_mod_configs"
+            "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" download"
+            "\"$SCRIPT_DIR/../steam/tmod-workshop.sh\" sync"
+            "_page_monitoring"
+            "_page_backup"
+            "_page_maintenance"
+            "\"$SCRIPT_DIR/../diag/tmod-diagnostics.sh\" full"
+            "if [[ -f \"$LOG_DIR/server.log\" ]]; then tail -50 \"$LOG_DIR/server.log\"; else echo \"  No server log found\"; fi"
+            "if [[ -f \"$MAIN_LOG\" ]]; then tail -30 \"$MAIN_LOG\"; else echo \"  No control log found\"; fi"
+            "show_classic_menu"
+            ""
+        )
+        local -a modes=(
+            "pause"
+            "pause"
+            "pause"
+            "pause"
+            "page"
+            "page"
+            "page"
+            "page"
+            "page"
+            "page"
+            "pause"
+            "pause"
+            "page"
+            "page"
+            "page"
+            "pause"
+            "pause"
+            "pause"
+            "page"
+            "exit"
+        )
+
+        local picked_idx
+        if ! _pick_index "Command Palette" "Select action" labels picked_idx; then
+            echo "  Goodbye!"
+            log_control "Control system session ended" "INFO"
+            exit 0
+        fi
+
+        _run_palette_action "${commands[$picked_idx]}" "${modes[$picked_idx]}"
+    done
+}
+
+show_interactive_menu() {
+    local mode="${1:-palette}"
+
+    case "$mode" in
+        classic) show_classic_menu ;;
+        palette|"") show_command_palette ;;
+        *) show_command_palette ;;
+    esac
 }
 
 # Enhanced maintenance with comprehensive tasks
@@ -1174,7 +1445,7 @@ show_system_diagnostics() {
     echo "⚙️ Process Information:"
     if is_server_up; then
         local pid
-        pid=$(pgrep -f "tModLoader" | head -1)
+        pid=$(get_server_pid)
         echo "   ✅ Server PID: $pid"
         echo "   📊 Process info: $(ps -p "$pid" -o pid,ppid,cmd --no-headers 2>/dev/null || echo "Process details unavailable")"
     else
@@ -1298,7 +1569,9 @@ Quick Commands:
   restart               Restart server (shortcut)
   status                Quick status overview
   backup                Auto backup (shortcut)
-  interactive           Interactive menu system
+  interactive           Interactive command palette
+  interactive classic   Classic numbered menu
+  interactive palette   Command palette
   help                  Show this help
 
 Examples:
@@ -1310,20 +1583,16 @@ Examples:
   ./tmod-control.sh backup auto              # Complete backup
   ./tmod-control.sh monitor start            # Start monitoring
   ./tmod-control.sh workshop download        # Download workshop mods
-  ./tmod-control.sh interactive              # Launch menu
+  ./tmod-control.sh interactive              # Launch command palette
+  ./tmod-control.sh interactive classic      # Launch classic numbered menu
   ./tmod-control.sh maintenance              # Run maintenance
 
 Interactive Mode:
   ./tmod-control.sh interactive
+  ./tmod-control.sh interactive classic
 
-  Provides a comprehensive menu-driven interface with:
-  - Real-time server status display
-  - Organized management categories  
-  - Visual feedback and progress indicators
-  - Error handling and validation
-  - Integrated help and guidance
-  - Steam Workshop integration
-  - Whitelist management
+  The default interactive UI is a command palette with filterable actions.
+  The classic numbered menu is still available for users who prefer it.
 
 Automation Examples:
   # Daily maintenance at 3 AM
@@ -1492,7 +1761,7 @@ main() {
             ;;
         
         # Interactive mode
-        interactive|menu) show_interactive_menu ;;
+        interactive|menu) show_interactive_menu "${2:-palette}" ;;
         
         # Help
         help|--help|-h) show_help ;;
