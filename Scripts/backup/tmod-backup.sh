@@ -249,15 +249,16 @@ backup_full() {
     echo "📦 Creating full server backup..."
     echo "⚠️ This may take several minutes for large servers..."
     
-    # Enhanced exclusion patterns
+    local base_name
+    base_name="$(basename "$BASE_DIR")"
+
+    # Exclude portable runtime noise that should not be recursively archived.
     local exclude_patterns=(
-        "--exclude=logs/*.log"
-        "--exclude=backups"
+        "--exclude=${base_name}/Logs/*.log"
+        "--exclude=${base_name}/Backups"
         "--exclude=*.tmp"
         "--exclude=*.bak"
         "--exclude=*.old"
-        "--exclude=tmodloader/workshop"
-        "--exclude=tmodloader/saves"
         "--exclude=.git"
     )
     
@@ -724,7 +725,7 @@ restore_backup() {
             full)
                 echo "⚠️ Full restore requires server to be offline"
                 if command -v rsync >/dev/null; then
-                    rsync -av --exclude="logs/" --exclude="backups/" "$temp_extract/$(basename "$BASE_DIR")/" "$BASE_DIR/"
+                    rsync -av --exclude="Logs/" --exclude="Backups/" "$temp_extract/$(basename "$BASE_DIR")/" "$BASE_DIR/"
                 else
                     cp -rf "$temp_extract/$(basename "$BASE_DIR")"/* "$BASE_DIR/"
                 fi

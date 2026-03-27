@@ -40,7 +40,7 @@ log_monitor() {
 # Get enhanced server stats (unique to monitor)
 get_enhanced_server_stats() {
     local pid
-    pid=$(pgrep -f "tModLoader.dll" | head -1)
+    pid=$(get_server_pid)
 
     if [[ -z "$pid" ]]; then
         echo "Process not found"

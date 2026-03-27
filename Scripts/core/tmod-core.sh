@@ -187,10 +187,16 @@ log_it() {
 }
 
 
+# Return the first detected server PID, regardless of whether tModLoader is
+# running via the binary or through dotnet.
+get_server_pid() {
+    pgrep -f "tModLoader\|dotnet.*tModLoader" | head -1
+}
+
 # Check if server is running
 is_server_up() {
-    # Just check if tModLoader process is running
-    if pgrep -f "tModLoader" >/dev/null 2>&1; then
+    # Just check if a tModLoader process is running
+    if get_server_pid >/dev/null 2>&1; then
         return 0
     fi
     return 1
@@ -199,7 +205,7 @@ is_server_up() {
 # Get basic server stats: cpu mem uptime_minutes
 get_server_info() {
     local pid
-    pid=$(pgrep -f "tModLoader" | head -1)
+    pid=$(get_server_pid)
     [[ -z "$pid" ]] && { echo "not_running"; return 1; }
     
     # Read CPU and memory into separate variables

@@ -980,7 +980,7 @@ auto_fix() {
     local fixes_applied=0
 
     # Create missing BASE_DIR subdirectories
-    local required_dirs=("logs" "Worlds" "Mods" "configs" "backups" "engine")
+    local required_dirs=("Engine" "Logs" "Worlds" "Mods" "Configs" "Backups")
     for dir in "${required_dirs[@]}"; do
         if [[ ! -d "$BASE_DIR/$dir" ]]; then
             echo "🔧 Creating missing directory: $BASE_DIR/$dir"
@@ -990,7 +990,7 @@ auto_fix() {
     done
 
     # Create missing scripts subdirectories
-    local script_dirs=("core" "hub" "backup" "steam" "archived" "diag")
+    local script_dirs=("core" "hub" "backup" "steam" "diag")
     for dir in "${script_dirs[@]}"; do
         if [[ ! -d "$BASE_DIR/Scripts/$dir" ]]; then
             echo "🔧 Creating missing scripts directory: scripts/$dir"
@@ -1013,19 +1013,19 @@ auto_fix() {
     if [[ ! -f "$BASE_DIR/Configs/serverconfig.txt" ]]; then
         echo "🔧 Creating basic server configuration"
         mkdir -p "$BASE_DIR/Configs"
-        cat > "$BASE_DIR/Configs/serverconfig.txt" << 'EOF'
-world=Worlds/MyWorld.wld
-worldname=MyWorld
-autocreate=1
-worldsize=2
-difficulty=0
-maxplayers=8
+        if [[ -f "$BASE_DIR/Configs/serverconfig.example.txt" ]]; then
+            cp "$BASE_DIR/Configs/serverconfig.example.txt" "$BASE_DIR/Configs/serverconfig.txt"
+        else
+            cat > "$BASE_DIR/Configs/serverconfig.txt" << 'EOF'
 port=7777
-password=
-motd=Welcome to my tModLoader server!
-worldpath=Worlds/
-language=en-US
+maxplayers=8
+language=en
+upnp=1
+steamcmd_path=./Tools/SteamCMD/steamcmd.sh
+log_max_size=10M
+log_keep_days=14
 EOF
+        fi
         ((fixes_applied++))
     fi
 

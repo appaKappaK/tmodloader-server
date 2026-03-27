@@ -1291,7 +1291,7 @@ Mod Load Management:
 Maintenance & Utilities:
   maintenance           Run comprehensive maintenance tasks
   emergency             Emergency shutdown with backup
-  diagnostics           System diagnostics report
+  diagnostics           Run full diagnostics script
   scripts               Show all scripts status
   health                Comprehensive system health check
   logs                  Show recent system logs
@@ -1477,7 +1477,14 @@ main() {
         # Utility commands
         maintenance)    run_maintenance ;;
         emergency)      emergency_shutdown ;;
-        diagnostics)    show_system_diagnostics ;;
+        diagnostics)
+            if [[ -x "$SCRIPT_DIR/../diag/tmod-diagnostics.sh" ]]; then
+                shift
+                exec "$SCRIPT_DIR/../diag/tmod-diagnostics.sh" "${@:-full}"
+            else
+                show_system_diagnostics
+            fi
+            ;;
         health)         show_system_diagnostics ;;
         scripts)        show_system_diagnostics ;;
         logs)           
