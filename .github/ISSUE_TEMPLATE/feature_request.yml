@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an improvement for the portable toolkit
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: New users still have to manually...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      placeholder: Add a new setup target that...
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: I also considered...
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Include tradeoffs, compatibility concerns, or UX notes

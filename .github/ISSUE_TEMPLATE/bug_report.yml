@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a problem with the portable toolkit
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Please include enough detail to reproduce the problem in the portable/public version of the toolkit.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected instead.
+      placeholder: The workshop sync failed after...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: List the exact commands or menu actions.
+      placeholder: |
+        1. Run `make setup`
+        2. Run `bash Scripts/hub/tmod-control.sh`
+        3. Open Mods -> Workshop Status
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, shell, and any relevant tModLoader or SteamCMD version info
+      placeholder: Fedora 43, bash 5.3, SteamCMD local install
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste relevant logs or terminal output. Remove secrets first.
+      render: shell
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional context
+      description: Anything else that might help narrow it down

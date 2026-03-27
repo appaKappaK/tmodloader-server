@@ -358,6 +358,8 @@ Optional at `Configs/workshop_map.json`. Maps mod names to Workshop IDs for use 
 
 Issues, feature requests, and pull requests are welcome.
 
+See `CONTRIBUTING.md` for contribution guidelines and `SECURITY.md` for responsible disclosure.
+
 ## 🧹 Git Hygiene
 
 The portable runtime directories and local machine-specific files are intended to stay untracked. The repo ships with a `.gitignore` that excludes:
