@@ -68,6 +68,8 @@ make steamcmd-local
 
 This installs SteamCMD into `Tools/SteamCMD/steamcmd.sh`, which matches the default `steamcmd_path` in `Configs/serverconfig.txt`.
 
+If you plan to use Workshop downloads, install SteamCMD even if you used `make engine-github` for the engine itself.
+
 ### 4. Install tModLoader Server Files
 
 Recommended public-friendly path:

@@ -40,6 +40,32 @@ get_workshop_login_label() {
     fi
 }
 
+run_workshop_download_item() {
+    local install_base="$1"
+    local steam_login_user="$2"
+    local mod_id="$3"
+    local output_file="$4"
+
+    "$STEAMCMD_PATH" \
+        +force_install_dir "$install_base" \
+        +login "$steam_login_user" \
+        +workshop_download_item 1281930 "$mod_id" \
+        +quit > "$output_file" 2>&1
+}
+
+retry_workshop_download_item() {
+    local install_base="$1"
+    local steam_login_user="$2"
+    local mod_id="$3"
+    local output_file="$4"
+
+    "$STEAMCMD_PATH" \
+        +force_install_dir "$install_base" \
+        +login "$steam_login_user" \
+        +workshop_download_item 1281930 "$mod_id" \
+        +quit >> "$output_file" 2>&1
+}
+
 # Enhanced logging for workshop operations
 log_workshop() {
     local message
@@ -194,11 +220,7 @@ download_mods() {
         local steamcmd_output
         steamcmd_output=$(mktemp)
 
-        if "$STEAMCMD_PATH" \
-            +force_install_dir "$install_base" \
-            +login "$steam_login_user" \
-            +workshop_download_item 1281930 "$mod_id" \
-            +quit > "$steamcmd_output" 2>&1; then
+        if run_workshop_download_item "$install_base" "$steam_login_user" "$mod_id" "$steamcmd_output"; then
 
             (( downloaded++ ))
             _bar "$idx" "$mod_count"
@@ -214,11 +236,7 @@ download_mods() {
                 log_workshop "Rate limited on $mod_id, sleeping 60s" "WARN"
                 sleep 60
                 # Retry once after the cooldown
-                if "$STEAMCMD_PATH" \
-                    +force_install_dir "$install_base" \
-                    +login "$steam_login_user" \
-                    +workshop_download_item 1281930 "$mod_id" \
-                    +quit >> "$steamcmd_output" 2>&1; then
+                if retry_workshop_download_item "$install_base" "$steam_login_user" "$mod_id" "$steamcmd_output"; then
                     (( downloaded++ ))
                     log_workshop "Downloaded mod after retry: $mod_id" "INFO"
                 else

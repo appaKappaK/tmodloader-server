@@ -181,30 +181,6 @@ quick_status() {
 
 # ─── World management helpers ─────────────────────────────────────────────────
 
-# Read a value from serverconfig.txt
-_get_config() {
-    local key="$1"
-    local config="$BASE_DIR/Configs/serverconfig.txt"
-    [[ ! -f "$config" ]] && return 1
-    grep -m1 "^${key}=" "$config" | cut -d= -f2-
-}
-
-# Set or update a key=value line in serverconfig.txt
-_set_config() {
-    local key="$1"
-    local value="$2"
-    local config="$BASE_DIR/Configs/serverconfig.txt"
-
-    mkdir -p "$(dirname "$config")"
-    [[ ! -f "$config" ]] && touch "$config"
-
-    if grep -q "^${key}=" "$config" 2>/dev/null; then
-        sed -i "s|^${key}=.*|${key}=${value}|" "$config"
-    else
-        echo "${key}=${value}" >> "$config"
-    fi
-}
-
 # World picker page — lists worlds, user selects one, updates serverconfig.txt
 # Pass "start" as $1 to also start the server after selecting.
 _page_world_picker() {
@@ -233,7 +209,7 @@ _page_world_picker() {
 
         # Current active world from serverconfig.txt
         local active_world
-        active_world=$(basename "$(_get_config "world" 2>/dev/null)" .wld 2>/dev/null)
+        active_world=$(basename "$(server_config_get "world" "" 2>/dev/null)" .wld 2>/dev/null)
 
         # Print column header
         printf "  %4s  %-28s  %6s  %-16s\n" "  #" "Name" "Size" "Last Modified"
@@ -267,8 +243,8 @@ _page_world_picker() {
             local selected_name
             selected_name=$(basename "$selected" .wld)
 
-            _set_config "world"     "$BASE_DIR/Worlds/${selected_name}.wld"
-            _set_config "worldname" "$selected_name"
+            server_config_set "world"     "$BASE_DIR/Worlds/${selected_name}.wld"
+            server_config_set "worldname" "$selected_name"
 
             echo "  ✅ Active world set to: $selected_name"
             log_control "Active world changed to: $selected_name" "INFO"

@@ -59,7 +59,7 @@ prepend_env_path() {
     else
         printf -v "$var_name" '%s' "$new_path"
     fi
-    export "$var_name"
+    export "${var_name?}"
 }
 
 configure_steam_runtime_env() {
@@ -88,6 +88,12 @@ dotnet_has_runtime() {
     local required_version
     required_version=$(get_required_dotnet_version) || return 1
     "$dotnet_exe" --list-runtimes 2>/dev/null | grep -q "Microsoft.NETCore.App $required_version"
+}
+
+has_engine_install_files() {
+    [[ -f "$BASE_DIR/Engine/tModLoader.dll" ]] \
+        && [[ -f "$BASE_DIR/Engine/tModLoader.runtimeconfig.json" ]] \
+        && [[ -f "$BASE_DIR/Engine/LaunchUtils/InstallDotNet.sh" ]]
 }
 
 # Find the actual tModLoader binary
@@ -190,7 +196,16 @@ log_it() {
 # Return the first detected server PID, regardless of whether tModLoader is
 # running via the binary or through dotnet.
 get_server_pid() {
-    pgrep -f "tModLoader\|dotnet.*tModLoader" | head -1
+    local config_path="$BASE_DIR/Configs/serverconfig.txt"
+    local pid
+
+    pid=$(pgrep -f -- "-config $config_path" | head -n1 || true)
+    if [[ -n "$pid" ]]; then
+        echo "$pid"
+        return 0
+    fi
+
+    return 1
 }
 
 # Check if server is running
@@ -261,6 +276,21 @@ server_config_get() {
     val="${val:-$default}"
     # Expand leading ~ to $HOME
     echo "${val/#\~/$HOME}"
+}
+
+server_config_set() {
+    local key="$1"
+    local value="$2"
+    local config="$BASE_DIR/Configs/serverconfig.txt"
+
+    mkdir -p "$(dirname "$config")"
+    [[ ! -f "$config" ]] && touch "$config"
+
+    if grep -q "^${key}=" "$config" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${value}|" "$config"
+    else
+        echo "${key}=${value}" >> "$config"
+    fi
 }
 
 # Rotate logs based on serverconfig.txt thresholds
@@ -663,7 +693,11 @@ init_tmod() {
     local tmod_binary
     tmod_binary=$(find_tmodloader_binary 2>/dev/null || true)
     if [[ -z "$tmod_binary" ]]; then
-        log_it "tModLoader binary not found - server start/stop features unavailable" "WARN"
+        if has_engine_install_files; then
+            log_it "tModLoader engine files detected - local .NET runtime will be installed on first server start" "INFO"
+        else
+            log_it "tModLoader binary not found - server start/stop features unavailable" "WARN"
+        fi
     fi
 
     # Validate workshop directory if workshop functions will be used

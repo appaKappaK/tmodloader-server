@@ -235,7 +235,7 @@ check_tmodloader_binaries() {
         local runtimeconfig="$BASE_DIR/Engine/tModLoader.runtimeconfig.json"
         local install_script="$BASE_DIR/Engine/LaunchUtils/InstallDotNet.sh"
 
-        if [[ -f "$engine_dll" && -f "$runtimeconfig" && -f "$install_script" ]]; then
+        if has_engine_install_files; then
             echo "✅ tModLoader engine files detected"
             echo "   🔍 Type: Fresh engine install awaiting runtime bootstrap"
             echo "   📍 DLL: $engine_dll"
