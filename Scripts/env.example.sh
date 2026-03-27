@@ -2,7 +2,9 @@
 # Optional local environment overrides for the portable toolkit.
 # Copy to Scripts/env.sh and edit only if you want these values loaded automatically.
 
-# Steam account used for Workshop downloads.
+# Optional Steam account for Workshop downloads.
+# Anonymous Workshop downloads work as a fallback, but a real account may be
+# more reliable for large download batches.
 # export STEAM_USERNAME="your_steam_username"
 
 # Optional integrations.

@@ -24,6 +24,22 @@ MOD_IDS_FILE="$BASE_DIR/Scripts/steam/mod_ids.txt"
 WORKSHOP_DOWNLOAD_DIR="${WORKSHOP_DIR:-$BASE_DIR/Engine/steamapps/workshop/content/1281930}"
 ARCHIVE_DIR="$BASE_DIR/Mods/archived_mods"
 
+get_workshop_login_user() {
+    if [[ -n "$STEAM_USERNAME" ]]; then
+        echo "$STEAM_USERNAME"
+    else
+        echo "anonymous"
+    fi
+}
+
+get_workshop_login_label() {
+    if [[ -n "$STEAM_USERNAME" ]]; then
+        echo "logged-in ($STEAM_USERNAME)"
+    else
+        echo "anonymous fallback"
+    fi
+}
+
 # Enhanced logging for workshop operations
 log_workshop() {
     local message
@@ -53,11 +69,12 @@ validate_workshop_config() {
         ((errors++))
     fi
     
-    # Check Steam username
+    # Steam username is optional for Workshop downloads. Anonymous works, but
+    # a real account may be more resilient for larger download batches.
     if [[ -z "$STEAM_USERNAME" ]]; then
-        echo "❌ Steam username not set"
-        echo "💡 Set STEAM_USERNAME in your shell or Scripts/env.sh"
-        ((errors++))
+        echo "ℹ️ Steam username not set"
+        echo "💡 Workshop downloads will use anonymous login"
+        echo "💡 Set STEAM_USERNAME in your shell or Scripts/env.sh if you want logged-in downloads"
     fi
     
     # Check mod IDs file
@@ -124,6 +141,10 @@ download_mods() {
     # Count already-downloaded mods upfront
     local already=0
     local install_base="$BASE_DIR/Engine"
+    local steam_login_user
+    steam_login_user="$(get_workshop_login_user)"
+    local steam_login_label
+    steam_login_label="$(get_workshop_login_label)"
     for id in "${mod_ids[@]}"; do
         local mod_dir="$WORKSHOP_DOWNLOAD_DIR/$id"
         if [[ -d "$mod_dir" ]] && [[ -n "$(ls -A "$mod_dir" 2>/dev/null)" ]]; then
@@ -133,7 +154,7 @@ download_mods() {
     local to_download=$(( mod_count - already ))
 
     echo "📋 $mod_count mods in list  |  $already already downloaded  |  $to_download to fetch"
-    echo "👤 Steam User: $STEAM_USERNAME"
+    echo "👤 Steam Login: $steam_login_label"
     echo "📥 Download Dir: $WORKSHOP_DOWNLOAD_DIR"
     echo
 
@@ -175,7 +196,7 @@ download_mods() {
 
         if "$STEAMCMD_PATH" \
             +force_install_dir "$install_base" \
-            +login "$STEAM_USERNAME" \
+            +login "$steam_login_user" \
             +workshop_download_item 1281930 "$mod_id" \
             +quit > "$steamcmd_output" 2>&1; then
 
@@ -195,7 +216,7 @@ download_mods() {
                 # Retry once after the cooldown
                 if "$STEAMCMD_PATH" \
                     +force_install_dir "$install_base" \
-                    +login "$STEAM_USERNAME" \
+                    +login "$steam_login_user" \
                     +workshop_download_item 1281930 "$mod_id" \
                     +quit >> "$steamcmd_output" 2>&1; then
                     (( downloaded++ ))
@@ -655,9 +676,9 @@ show_status() {
     fi
     
     if [[ -n "$STEAM_USERNAME" ]]; then
-        echo "   ✅ Steam User: $STEAM_USERNAME"
+        echo "   ✅ Steam Login: logged-in ($STEAM_USERNAME)"
     else
-        echo "   ❌ Steam User: Not configured"
+        echo "   ℹ️ Steam Login: anonymous fallback"
     fi
     
     if [[ -f "$MOD_IDS_FILE" ]]; then
@@ -725,6 +746,9 @@ init_workshop() {
     if validate_workshop_config; then
         echo "✅ Workshop system initialized successfully"
         echo "💡 Edit $MOD_IDS_FILE to add your desired mod IDs"
+        if [[ -z "$STEAM_USERNAME" ]]; then
+            echo "💡 Downloads will use anonymous login until STEAM_USERNAME is configured"
+        fi
         echo "💡 Then run './tmod-workshop.sh download' to download mods"
         return 0
     else
@@ -1338,8 +1362,9 @@ Workflow:
   6. ./tmod-workshop.sh archive        # Clean up old versions
 
 Configuration:
-  Set these values before downloading:
+  Required before downloading:
   - steamcmd_path=./Tools/SteamCMD/steamcmd.sh   # in Configs/serverconfig.txt
+  Optional but recommended for larger download batches:
   - STEAM_USERNAME="your_steam_username"   # exported in your shell or Scripts/env.sh
 
 Files:

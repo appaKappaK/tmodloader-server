@@ -223,6 +223,8 @@ Use it for local values you do not want in tracked files, such as:
 - webhook URLs
 - machine-specific overrides
 
+For Workshop downloads, `STEAM_USERNAME` is optional. The toolkit will fall back to anonymous SteamCMD access if it is unset, but a real Steam account may be more reliable for larger download batches.
+
 ### `Scripts/steam/mod_ids.txt`
 
 This file is also local and gitignored. It accepts one Steam Workshop URL or numeric ID per line. Lines starting with `#` are ignored.
