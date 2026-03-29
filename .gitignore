@@ -20,9 +20,14 @@
 /Testing/*.log
 /Testing/*.tmp
 /bin/
+/tmodloader-ui
+/cmd/tmodloader-ui/tmodloader-ui
+/cmd/tmodloader-ui/tmodloader-ui.exe
 coverage.out
 *.coverprofile
 *.test
+*.prof
+*.pprof
 
 # Temporary and backup files
 *.bak

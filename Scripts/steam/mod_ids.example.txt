@@ -5,7 +5,10 @@
 #
 # Lines starting with # are ignored.
 # One Steam Workshop URL or numeric ID per line.
-# IDs can be added via the menu: Mods → Add Mod by URL or ID
+# You can add entries from the Go control room:
+#   Workshop / Add Mod by URL or ID
+# Or from the CLI:
+#   bash Scripts/hub/tmod-control.sh mods add <workshop_url_or_id>
 #
 # Example mods (uncomment to use):
 # 2563309347  # Calamity Mod
@@ -17,4 +20,3 @@
 # 2564593266  # VeinMiner
 
 # Add your mod IDs below:
-

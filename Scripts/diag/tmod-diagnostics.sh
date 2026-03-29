@@ -8,11 +8,11 @@ CORE_SCRIPT="$SCRIPT_DIR/../core/tmod-core.sh"
 if [[ -f "$CORE_SCRIPT" ]]; then
     # shellcheck disable=SC1090
     source "$CORE_SCRIPT" || {
-        echo "❌ Failed to load core functions from $CORE_SCRIPT"
+        echo "Error: Failed to load core functions from $CORE_SCRIPT"
         exit 1
     }
 else
-    echo "❌ Cannot find core functions at: $CORE_SCRIPT"
+    echo "Error: Cannot find core functions at: $CORE_SCRIPT"
     exit 1
 fi
 
@@ -29,6 +29,10 @@ log_diagnostic() {
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo "[$timestamp] [$level] $message" | tee -a "$DIAGNOSTIC_LOG"
     log_it "Diagnostics: $message" "$level"
+}
+
+print_divider() {
+    printf '%s\n' '------------------------------------------------------------'
 }
 
 # Initialize diagnostics system - single init, no double-call
@@ -973,8 +977,9 @@ generate_report() {
 
 # Quick diagnostic
 quick_diagnostic() {
-    echo "🚀 Quick Diagnostic Mode"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
+    echo "Quick Diagnostic Mode"
+    print_divider
 
     gather_system_info
     check_directory_structure
@@ -982,16 +987,17 @@ quick_diagnostic() {
 
     echo
     if is_server_up; then
-        echo "✅ Quick Check: Server is running and basic structure is OK"
+        echo "OK: Server is running and basic structure is healthy"
     else
-        echo "⚠️ Quick Check: Server is not running - run full diagnostic for details"
+        echo "Warning: Server is not running - run the full diagnostic for details"
     fi
 }
 
 # Auto-fix common issues
 auto_fix() {
-    echo "🔧 Auto-Fix Mode - Attempting to resolve common issues..."
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
+    echo "Auto-Fix Mode - Attempting to resolve common issues..."
+    print_divider
 
     local fixes_applied=0
 
@@ -999,7 +1005,7 @@ auto_fix() {
     local required_dirs=("Engine" "Logs" "Worlds" "Mods" "Configs" "Backups")
     for dir in "${required_dirs[@]}"; do
         if [[ ! -d "$BASE_DIR/$dir" ]]; then
-            echo "🔧 Creating missing directory: $BASE_DIR/$dir"
+            echo "Creating missing directory: $BASE_DIR/$dir"
             mkdir -p "$BASE_DIR/$dir"
             ((fixes_applied++))
         fi
@@ -1009,7 +1015,7 @@ auto_fix() {
     local script_dirs=("core" "hub" "backup" "steam" "diag")
     for dir in "${script_dirs[@]}"; do
         if [[ ! -d "$BASE_DIR/Scripts/$dir" ]]; then
-            echo "🔧 Creating missing scripts directory: scripts/$dir"
+            echo "Creating missing scripts directory: scripts/$dir"
             mkdir -p "$BASE_DIR/Scripts/$dir"
             ((fixes_applied++))
         fi
@@ -1018,16 +1024,16 @@ auto_fix() {
     # Fix script permissions
     local fixed_perms=0
     while IFS= read -r script; do
-        echo "🔧 Making script executable: $(basename "$script")"
+        echo "Making script executable: $(basename "$script")"
         chmod +x "$script"
         ((fixes_applied++))
         ((fixed_perms++))
     done < <(find "$BASE_DIR/Scripts" -name "tmod-*.sh" -not -executable 2>/dev/null)
-    [[ $fixed_perms -gt 0 ]] && echo "   ✅ Fixed permissions on $fixed_perms scripts"
+    [[ $fixed_perms -gt 0 ]] && echo "   OK: Fixed permissions on $fixed_perms scripts"
 
     # Create basic server config if missing
     if [[ ! -f "$BASE_DIR/Configs/serverconfig.txt" ]]; then
-        echo "🔧 Creating basic server configuration"
+        echo "Creating basic server configuration"
         mkdir -p "$BASE_DIR/Configs"
         if [[ -f "$BASE_DIR/Configs/serverconfig.example.txt" ]]; then
             cp "$BASE_DIR/Configs/serverconfig.example.txt" "$BASE_DIR/Configs/serverconfig.txt"
@@ -1047,16 +1053,16 @@ EOF
 
     echo
     if [[ $fixes_applied -gt 0 ]]; then
-        echo "✅ Applied $fixes_applied fixes"
+        echo "OK: Applied $fixes_applied fixes"
         log_diagnostic "Auto-fix applied $fixes_applied fixes" "INFO"
     else
-        echo "ℹ️ No common issues found to fix automatically"
+        echo "Info: No common issues found to fix automatically"
     fi
 }
 
 show_help() {
     cat << 'EOF'
-🔧 tModLoader System Diagnostics
+tModLoader System Diagnostics
 
 Usage: ./tmod-diagnostics.sh [command] [options]
 
@@ -1115,8 +1121,9 @@ init_diagnostics
 # Main execution
 case "${1:-full}" in
     full)
-        echo "🔍 tModLoader System Diagnostics"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        print_divider
+        echo "tModLoader System Diagnostics"
+        print_divider
         gather_system_info
         check_directory_structure
         check_tmodloader_binaries
@@ -1129,7 +1136,7 @@ case "${1:-full}" in
         check_security
         performance_analysis
         echo
-        echo "🏁 Diagnostic scan completed"
+        echo "OK: Diagnostic scan completed"
         log_diagnostic "Full diagnostic scan completed" "INFO"
         ;;
     quick)        quick_diagnostic ;;
@@ -1148,8 +1155,8 @@ case "${1:-full}" in
     performance)  performance_analysis ;;
     help|--help|-h) show_help ;;
     *)
-        echo "❌ Unknown command: $1"
-        echo "Use 'help' for usage information"
+        echo "Error: Unknown command: $1"
+        echo "Tip: Use 'help' for usage information"
         exit 1
         ;;
 esac

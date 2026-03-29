@@ -87,11 +87,11 @@ engine-github:
 
 tui-build:
 	@mkdir -p bin
-	@go build -o bin/tmodloader-ui .
+	@go build -o bin/tmodloader-ui ./cmd/tmodloader-ui
 	@echo "Built bin/tmodloader-ui"
 
 tui-run:
-	@go run .
+	@go run ./cmd/tmodloader-ui
 
 install-man:
 	@echo "Installing man page to $(MANDIR)..."

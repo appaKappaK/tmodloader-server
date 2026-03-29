@@ -11,13 +11,17 @@ if [[ -f "$CORE_SCRIPT" ]]; then
      
     # shellcheck disable=SC1090
     source "$CORE_SCRIPT" || {
-        echo "❌ Failed to load core functions from $CORE_SCRIPT"
+        echo "Error: Failed to load core functions from $CORE_SCRIPT"
         exit 1
     }
 else
-    echo "❌ Cannot find core functions at: $CORE_SCRIPT"
+    echo "Error: Cannot find core functions at: $CORE_SCRIPT"
     exit 1
 fi
+
+print_divider() {
+    printf '%s\n' '------------------------------------------------------------'
+}
 
 # Monitoring configuration
 HEALTH_CHECK_INTERVAL=60
@@ -117,22 +121,23 @@ perform_health_check() {
 
 # Comprehensive status dashboard (unique to monitor)
 show_status() {
-    clear
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🎮 tModLoader Server Status Dashboard"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
+        clear
+    fi
 
-    local status_icon status_text
+    print_divider
+    echo "tModLoader Server Status Dashboard"
+    print_divider
+
+    local status_text
     if is_server_up; then
-        status_icon="🟢"
         status_text="ONLINE"
     else
-        status_icon="🔴"
         status_text="OFFLINE"
     fi
 
-    echo "📊 Server Status: $status_icon $status_text"
-    echo "📅 Last Check: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "Server Status: $status_text"
+    echo "Last Check: $(date '+%Y-%m-%d %H:%M:%S')"
 
     if is_server_up; then
         local stats
@@ -142,41 +147,41 @@ show_status() {
             local cpu mem disk uptime
             read -r cpu mem disk uptime <<< "$stats"
 
-            echo "⚡ CPU Usage: ${cpu}%"
-            echo "💾 Memory Usage: ${mem}%"
-            echo "💿 Disk Usage: ${disk}%"
-            echo "⏱️  Uptime: $uptime"
-            echo "👥 Players Online: $(get_player_count)"
+            echo "CPU Usage: ${cpu}%"
+            echo "Memory Usage: ${mem}%"
+            echo "Disk Usage: ${disk}%"
+            echo "Uptime: $uptime"
+            echo "Players Online: $(get_player_count)"
 
             # Show mod count
             local mod_count
             mod_count=$(get_mod_list | wc -l)
-            echo "📦 Mods Loaded: $mod_count"
+            echo "Mods Loaded: $mod_count"
 
             # Screen session info
             local screen_info
             screen_info=$(screen -list | grep tmodloader_server || echo 'Not found')
-            echo "📺 Screen Session: $screen_info"
+            echo "Screen Session: $screen_info"
         fi
 
         # Recent log entries
         echo
-        echo "📋 Recent Activity (last 5 lines):"
-        echo "┌────────────────────────────────────────────────────────────┐"
+        echo "Recent Activity (last 5 lines):"
+        print_divider
         if [[ -f "$LOG_DIR/server.log" ]]; then
-            tail -5 "$LOG_DIR/server.log" | sed 's/^/│ /' | cut -c1-60
+            tail -5 "$LOG_DIR/server.log" | sed 's/^/  /' | cut -c1-62
         else
-            echo "│ No log file found"
+            echo "  No log file found"
         fi
-        echo "└────────────────────────────────────────────────────────────┘"
+        print_divider
     else
-        echo "❌ Server is not running"
+        echo "Error: Server is not running"
         echo
-        echo "💡 To start the server: ./tmod-server.sh start"
-        echo "💡 To check logs: tail -f $LOG_DIR/server.log"
+        echo "Tip: To start the server: ./tmod-server.sh start"
+        echo "Tip: To check logs: tail -f $LOG_DIR/server.log"
     fi
 
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
 }
 
 # Continuous monitoring mode (unique to monitor)
@@ -221,18 +226,18 @@ monitor_continuously() {
 # Show monitoring logs
 show_logs() {
     if [[ -f "$LOG_DIR/monitor.log" ]]; then
-        echo "📋 Monitor Logs (last 20 entries):"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Monitor Logs (last 20 entries):"
+        print_divider
         tail -20 "$LOG_DIR/monitor.log"
     else
-        echo "📋 No monitor logs found"
+        echo "No monitor logs found"
     fi
 }
 
 # Show help
 show_help() {
     cat << 'EOF'
-🔧 tModLoader Enhanced Server Monitor
+tModLoader Server Monitor
 
 Monitor server health, performance, and send intelligent alerts
 
@@ -251,12 +256,12 @@ Examples:
   ./tmod-monitor.sh logs       # View monitor history
 
 Features:
-  ✅ Real-time server health monitoring
-  ✅ Discord alerts for critical issues
-  ✅ Resource usage tracking (CPU/Memory/Disk)  
-  ✅ Player count tracking
-  ✅ Mod error detection and alerting
-  ✅ Configurable alert thresholds
+  - Real-time server health monitoring
+  - Discord alerts for critical issues
+  - Resource usage tracking (CPU/Memory/Disk)
+  - Player count tracking
+  - Mod error detection and alerting
+  - Configurable alert thresholds
 
 Configuration:
   Edit thresholds at top of script:
@@ -275,9 +280,9 @@ case "${1:-status}" in
     monitor) monitor_continuously ;;
     check)   
         if perform_health_check; then
-            echo "✅ Health check passed"
+            echo "OK: Health check passed"
         else
-            echo "❌ Health check failed"
+            echo "Error: Health check failed"
             exit 1
         fi
         ;;

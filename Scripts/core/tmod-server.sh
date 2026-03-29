@@ -10,17 +10,21 @@ if [[ -f "$CORE_SCRIPT" ]]; then
      
     # shellcheck disable=SC1090
     source "$CORE_SCRIPT" || {
-        echo "❌ Failed to load core functions from $CORE_SCRIPT"
+        echo "Error: Failed to load core functions from $CORE_SCRIPT"
         exit 1
     }
 else
-    echo "❌ Cannot find core functions at: $CORE_SCRIPT"
+    echo "Error: Cannot find core functions at: $CORE_SCRIPT"
     exit 1
 fi
 
+print_divider() {
+    printf '%s\n' '------------------------------------------------------------'
+}
+
 start_server() {
     if is_server_up; then
-        echo "ℹ️ Server is already running"
+        echo "Info: Server is already running"
         return 0
     fi
 
@@ -28,10 +32,10 @@ start_server() {
     log_it "Starting tModLoader server"
 
     if start_server_screen; then
-        echo "✅ Server started successfully"
+        echo "OK: Server started successfully"
         return 0
     else
-        echo "❌ Failed to start server"
+        echo "Error: Failed to start server"
         return 1
     fi
 }
@@ -56,11 +60,11 @@ stop_server() {
     fi
 
     if is_server_up; then
-        echo "❌ Failed to stop server"
+        echo "Error: Failed to stop server"
         log_it "Server stop failed" "ERROR"
         return 1
     else
-        echo "✅ Server stopped"
+        echo "OK: Server stopped"
         log_it "Server stopped successfully"
         return 0
     fi
@@ -76,12 +80,12 @@ restart_server() {
 }
 
 show_status() {
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🎮 tModLoader Server Status"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
+    echo "tModLoader Server Status"
+    print_divider
     
     if is_server_up; then
-        echo "Status: 🟢 ONLINE"
+        echo "Status: ONLINE"
         
         local info
         info=$(get_server_info)
@@ -99,15 +103,18 @@ show_status() {
         # Show recent activity
         echo ""
         echo "Recent log entries:"
+        print_divider
         if [[ -f "$LOG_DIR/server.log" ]]; then
             tail -3 "$LOG_DIR/server.log" | sed 's/^/  /'
+        else
+            echo "  No server log file found"
         fi
     else
-        echo "Status: 🔴 OFFLINE"
+        echo "Status: OFFLINE"
         echo ""
         echo "Use: $0 start"
     fi
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
 }
 
 # Simple help

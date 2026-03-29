@@ -282,55 +282,148 @@ read_temp_from_thermal_zones() {
 read_temp_from_sensors() {
     local want="$1"
     local line chip
+    local cpu_package="" cpu_tctl="" cpu_tdie=""
+    local -a cpu_core_temps=()
 
     [[ -x "$(command -v sensors 2>/dev/null)" ]] || return 1
 
+    _emit_cpu_temp_from_sensor_block() {
+        local package_value="" median_value="" value_count=0
+
+        if [[ -n "$cpu_tdie" ]]; then
+            echo "${cpu_tdie}C"
+            return 0
+        fi
+
+        if [[ ${#cpu_core_temps[@]} -gt 0 ]]; then
+            local -a sorted_core_temps=()
+            mapfile -t sorted_core_temps < <(printf '%s\n' "${cpu_core_temps[@]}" | sort -n)
+            value_count=${#sorted_core_temps[@]}
+            if (( value_count % 2 == 1 )); then
+                median_value="${sorted_core_temps[$((value_count / 2))]}"
+            else
+                median_value=$(( (sorted_core_temps[(value_count / 2) - 1] + sorted_core_temps[value_count / 2]) / 2 ))
+            fi
+        fi
+
+        if [[ -n "$cpu_package" ]]; then
+            package_value="$cpu_package"
+        elif [[ -n "$cpu_tctl" ]]; then
+            package_value="$cpu_tctl"
+        fi
+
+        if [[ -n "$package_value" && -n "$median_value" ]]; then
+            if (( package_value > median_value + 12 )); then
+                echo "${median_value}C"
+            else
+                echo "${package_value}C"
+            fi
+            return 0
+        fi
+
+        if [[ -n "$package_value" ]]; then
+            echo "${package_value}C"
+            return 0
+        fi
+
+        if [[ -n "$median_value" ]]; then
+            echo "${median_value}C"
+            return 0
+        fi
+
+        return 1
+    }
+
     while IFS= read -r line; do
         if [[ -z "$line" ]]; then
+            if [[ "$want" == "cpu" ]] && _emit_cpu_temp_from_sensor_block; then
+                return 0
+            fi
             chip=""
+            cpu_package=""
+            cpu_tctl=""
+            cpu_tdie=""
+            cpu_core_temps=()
             continue
         fi
 
         if [[ "$line" != *:* ]]; then
+            if [[ "$want" == "cpu" ]] && _emit_cpu_temp_from_sensor_block; then
+                return 0
+            fi
             chip="$(tr '[:upper:]' '[:lower:]' <<<"$line")"
+            cpu_package=""
+            cpu_tctl=""
+            cpu_tdie=""
+            cpu_core_temps=()
             continue
         fi
 
         case "$want" in
             cpu)
+                if [[ "$line" =~ ^Tdie:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    cpu_tdie="${BASH_REMATCH[1]}"
+                    continue
+                fi
                 if [[ "$line" =~ ^Tctl:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
-                    echo "${BASH_REMATCH[1]}C"
-                    return 0
+                    cpu_tctl="${BASH_REMATCH[1]}"
+                    continue
                 fi
                 if [[ "$line" =~ ^Package[[:space:]]id[[:space:]]0:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
-                    echo "${BASH_REMATCH[1]}C"
-                    return 0
+                    cpu_package="${BASH_REMATCH[1]}"
+                    continue
                 fi
                 if [[ "$line" =~ ^CPU[[:space:]]Temp:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
-                    echo "${BASH_REMATCH[1]}C"
-                    return 0
+                    cpu_package="${BASH_REMATCH[1]}"
+                    continue
                 fi
-                if [[ "$line" =~ ^temp1:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ (k10temp|coretemp|cpu) ]]; then
-                    echo "${BASH_REMATCH[1]}C"
-                    return 0
+                if [[ "$line" =~ ^Core[[:space:]]+[0-9]+:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    local sensor_value="${BASH_REMATCH[1]}"
+                    if [[ "$chip" =~ coretemp ]]; then
+                        cpu_core_temps+=("$sensor_value")
+                        continue
+                    fi
+                fi
+                if [[ "$line" =~ ^ccd[[:space:]]*[0-9]+:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    local sensor_value="${BASH_REMATCH[1]}"
+                    if [[ "$chip" =~ (k10temp|zenpower|cpu) ]]; then
+                        cpu_core_temps+=("$sensor_value")
+                        continue
+                    fi
+                fi
+                if [[ "$line" =~ ^temp1:[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    local sensor_value="${BASH_REMATCH[1]}"
+                    if [[ "$chip" =~ (k10temp|coretemp|cpu) ]] && [[ -z "$cpu_package" ]]; then
+                        cpu_package="$sensor_value"
+                        continue
+                    fi
                 fi
                 ;;
             gpu)
-                if [[ "$line" =~ ^(edge|junction|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ (amdgpu|radeon|nouveau|gpu) ]]; then
-                    echo "${BASH_REMATCH[2]}C"
-                    return 0
+                if [[ "$line" =~ ^(edge|junction|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    local sensor_value="${BASH_REMATCH[2]}"
+                    if [[ "$chip" =~ (amdgpu|radeon|nouveau|gpu) ]]; then
+                        echo "${sensor_value}C"
+                        return 0
+                    fi
                 fi
                 ;;
             ram)
-                if [[ "$line" =~ ^(DIMM|SODIMM|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ (dimm|spd|jc42|ddr|ram|memory) ]]; then
-                    echo "${BASH_REMATCH[2]}C"
-                    return 0
+                if [[ "$line" =~ ^(DIMM|SODIMM|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    local sensor_value="${BASH_REMATCH[2]}"
+                    if [[ "$chip" =~ (dimm|spd|jc42|ddr|ram|memory) ]]; then
+                        echo "${sensor_value}C"
+                        return 0
+                    fi
                 fi
                 ;;
             nvme)
-                if [[ "$line" =~ ^(Composite|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]] && [[ "$chip" =~ nvme ]]; then
-                    echo "${BASH_REMATCH[2]}C"
-                    return 0
+                if [[ "$line" =~ ^(Composite|temp1):[[:space:]]*\+?([0-9]+)(\.[0-9]+)?[[:space:]]*°?C ]]; then
+                    local sensor_value="${BASH_REMATCH[2]}"
+                    if [[ "$chip" =~ nvme ]]; then
+                        echo "${sensor_value}C"
+                        return 0
+                    fi
                 fi
                 ;;
             board)
@@ -342,6 +435,10 @@ read_temp_from_sensors() {
         esac
     done < <(LC_ALL=C sensors 2>/dev/null)
 
+    if [[ "$want" == "cpu" ]] && _emit_cpu_temp_from_sensor_block; then
+        return 0
+    fi
+
     return 1
 }
 
@@ -349,9 +446,16 @@ get_host_temperatures() {
     local want label temp
 
     for want in cpu gpu ram nvme board; do
-        temp="$(read_temp_from_thermal_zones "$want" 2>/dev/null || true)"
-        if [[ -z "$temp" ]]; then
+        if [[ "$want" == "cpu" ]]; then
             temp="$(read_temp_from_sensors "$want" 2>/dev/null || true)"
+            if [[ -z "$temp" ]]; then
+                temp="$(read_temp_from_thermal_zones "$want" 2>/dev/null || true)"
+            fi
+        else
+            temp="$(read_temp_from_thermal_zones "$want" 2>/dev/null || true)"
+            if [[ -z "$temp" ]]; then
+                temp="$(read_temp_from_sensors "$want" 2>/dev/null || true)"
+            fi
         fi
         [[ -n "$temp" ]] || continue
 
