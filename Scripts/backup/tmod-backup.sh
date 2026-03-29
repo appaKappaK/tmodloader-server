@@ -10,15 +10,19 @@ CORE_SCRIPT="$SCRIPT_DIR/../core/tmod-core.sh"
 if [[ -f "$CORE_SCRIPT" ]]; then
     # shellcheck disable=SC1090
     source "$CORE_SCRIPT" || {
-        echo "❌ Failed to load core functions from $CORE_SCRIPT"
+        echo "Error: Failed to load core functions from $CORE_SCRIPT"
         exit 1
     }
 else
-    echo "❌ Cannot find core functions at: $CORE_SCRIPT"
-    echo "📁 Current directory: $(pwd)"
-    echo "📁 Script directory: $SCRIPT_DIR"
+    echo "Error: Cannot find core functions at: $CORE_SCRIPT"
+    echo "Current directory: $(pwd)"
+    echo "Script directory: $SCRIPT_DIR"
     exit 1
 fi
+
+print_divider() {
+    printf '%s\n' '------------------------------------------------------------'
+}
 
 # Enhanced backup configuration
 BACKUP_ROOT="$BASE_DIR/Backups"
@@ -508,9 +512,9 @@ verify_backup() {
 
 # Enhanced status with detailed breakdown
 show_status() {
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "💾 tModLoader Enhanced Backup System Status"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
+    echo "tModLoader Backup System Status"
+    print_divider
     
     # Storage usage with breakdown
     local total_size world_size config_size full_size
@@ -519,18 +523,18 @@ show_status() {
     config_size=$(du -sh "$CONFIG_BACKUP_DIR" 2>/dev/null | cut -f1)  
     full_size=$(du -sh "$FULL_BACKUP_DIR" 2>/dev/null | cut -f1)
     
-    echo "📊 Storage Usage:"
+    echo "Storage Usage:"
     echo "   Total: $total_size"
-    echo "   └── Worlds: $world_size"
-    echo "   └── Configs: $config_size"
-    echo "   └── Full: $full_size"
-    echo "📁 Location: $BACKUP_ROOT"
+    echo "   Worlds: $world_size"
+    echo "   Configs: $config_size"
+    echo "   Full: $full_size"
+    echo "Location: $BACKUP_ROOT"
     echo
     
     # World backups with latest info
     local world_count
     world_count=$(find "$WORLD_BACKUP_DIR" -name "worlds_*.tar.gz" 2>/dev/null | wc -l)
-    echo "🌍 World Backups: $world_count (retention: ${WORLD_RETENTION_DAYS} days)"
+    echo "World Backups: $world_count (retention: ${WORLD_RETENTION_DAYS} days)"
     if (( world_count > 0 )); then
         local latest_world
         latest_world=$(find "$WORLD_BACKUP_DIR" -name "worlds_*.tar.gz" -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
@@ -542,9 +546,9 @@ show_status() {
         
         # Check integrity of latest
         if verify_backup "$latest_world" >/dev/null 2>&1; then
-            echo "   Status: ✅ Latest backup verified"
+            echo "   Status: OK - latest backup verified"
         else
-            echo "   Status: ⚠️ Latest backup needs verification"
+            echo "   Status: Warning - latest backup needs verification"
         fi
     fi
     echo
@@ -552,7 +556,7 @@ show_status() {
     # Config backups
     local config_count
     config_count=$(find "$CONFIG_BACKUP_DIR" -name "configs_*.tar.gz" 2>/dev/null | wc -l)
-    echo "⚙️ Config Backups: $config_count (retention: ${CONFIG_RETENTION_DAYS} days)"
+    echo "Config Backups: $config_count (retention: ${CONFIG_RETENTION_DAYS} days)"
     if (( config_count > 0 )); then
         local latest_config
         latest_config=$(find "$CONFIG_BACKUP_DIR" -name "configs_*.tar.gz" -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
@@ -567,7 +571,7 @@ show_status() {
     # Full backups
     local full_count
     full_count=$(find "$FULL_BACKUP_DIR" -name "full_*.tar.gz" 2>/dev/null | wc -l)
-    echo "💾 Full Backups: $full_count (retention: ${FULL_RETENTION_DAYS} days)"
+    echo "Full Backups: $full_count (retention: ${FULL_RETENTION_DAYS} days)"
     if (( full_count > 0 )); then
         local latest_full
         latest_full=$(find "$FULL_BACKUP_DIR" -name "full_*.tar.gz" -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
@@ -581,22 +585,23 @@ show_status() {
     
     # Recent activity
     if [[ -f "$LOG_DIR/backup.log" ]]; then
-        echo "📋 Recent Activity (last 5 entries):"
+        echo "Recent Activity (last 5 entries):"
         tail -5 "$LOG_DIR/backup.log" | sed 's/^/   /'
     fi
     
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
 }
 
 # List backups with enhanced details
 list_backups() {
     local backup_type="${1:-all}"
     
-    echo "📋 Enhanced Backup Inventory"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
+    echo "Enhanced Backup Inventory"
+    print_divider
     
     if [[ "$backup_type" == "all" || "$backup_type" == "worlds" ]]; then
-        echo "🌍 World Backups:"
+        echo "World Backups:"
         if compgen -G "$WORLD_BACKUP_DIR/worlds_*.tar.gz" > /dev/null; then
             printf "   %-15s %-10s %-8s %-10s %s\n" "Date" "Time" "Size" "Status" "Filename"
             echo "   $(printf '%0.1s' '-'{1..70})"
@@ -607,9 +612,9 @@ list_backups() {
                 
                 # Check if backup has checksum
                 if [[ -f "$WORLD_BACKUP_DIR/$filename.md5" ]]; then
-                    status_icon="✅"
+                    status_icon="OK"
                 else
-                    status_icon="⚠️"
+                    status_icon="Warning"
                 fi
                 
                 printf "   %-15s %-10s %-8s %-10s %s\n" "$date" "$time" "$size_human" "$status_icon" "$filename"
@@ -621,7 +626,7 @@ list_backups() {
     fi
     
     if [[ "$backup_type" == "all" || "$backup_type" == "configs" ]]; then
-        echo "⚙️ Configuration Backups:"
+        echo "Configuration Backups:"
         if compgen -G "$CONFIG_BACKUP_DIR/configs_*.tar.gz" > /dev/null; then
             printf "   %-15s %-10s %-8s %-10s %s\n" "Date" "Time" "Size" "Status" "Filename"
             echo "   $(printf '%0.1s' '-'{1..70})"
@@ -631,9 +636,9 @@ list_backups() {
                 size_human=$(numfmt --to=iec-i --suffix=B "$size" 2>/dev/null || echo "${size}B")
                 
                 if [[ -f "$CONFIG_BACKUP_DIR/$filename.md5" ]]; then
-                    status_icon="✅"
+                    status_icon="OK"
                 else
-                    status_icon="⚠️"
+                    status_icon="Warning"
                 fi
                 
                 printf "   %-15s %-10s %-8s %-10s %s\n" "$date" "$time" "$size_human" "$status_icon" "$filename"
@@ -645,7 +650,7 @@ list_backups() {
     fi
     
     if [[ "$backup_type" == "all" || "$backup_type" == "full" ]]; then
-        echo "💾 Full Server Backups:"
+        echo "Full Server Backups:"
         if compgen -G "$FULL_BACKUP_DIR/full_*.tar.gz" > /dev/null; then
             printf "   %-15s %-10s %-8s %-10s %s\n" "Date" "Time" "Size" "Status" "Filename"
             echo "   $(printf '%0.1s' '-'{1..70})"
@@ -655,9 +660,9 @@ list_backups() {
                 size_human=$(numfmt --to=iec-i --suffix=B "$size" 2>/dev/null || echo "${size}B")
                 
                 if [[ -f "$FULL_BACKUP_DIR/$filename.md5" ]]; then
-                    status_icon="✅"
+                    status_icon="OK"
                 else
-                    status_icon="⚠️"
+                    status_icon="Warning"
                 fi
                 
                 printf "   %-15s %-10s %-8s %-10s %s\n" "$date" "$time" "$size_human" "$status_icon" "$filename"
@@ -667,8 +672,8 @@ list_backups() {
         fi
     fi
     
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "Legend: ✅ = Verified/Has checksum  ⚠️ = Needs verification"
+    print_divider
+    echo "Legend: OK = verified or has checksum, Warning = needs verification"
 }
 
 # Safe restore with pre-restore backup
@@ -676,14 +681,14 @@ restore_backup() {
     local backup_file="$1"
     
     if [[ ! -f "$backup_file" ]]; then
-        echo "❌ Backup file not found: $backup_file"
+        echo "Error: Backup file not found: $backup_file"
         return 1
     fi
     
     # Verify backup integrity first
-    echo "🔍 Verifying backup integrity..."
+    echo "Verifying backup integrity..."
     if ! verify_backup "$backup_file"; then
-        echo "❌ Backup verification failed. Restore aborted for safety."
+        echo "Error: Backup verification failed. Restore aborted for safety."
         return 1
     fi
     
@@ -697,21 +702,21 @@ restore_backup() {
     elif [[ "$filename" == full_* ]]; then
         backup_type="full"
     else
-        echo "❌ Unknown backup type: $filename"
+        echo "Error: Unknown backup type: $filename"
         return 1
     fi
     
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "⚠️  RESTORE OPERATION"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
+    echo "RESTORE OPERATION"
+    print_divider
     echo "This will restore: $backup_type"
     echo "From backup: $filename"
     echo "Target: $backup_type files will be OVERWRITTEN"
     echo
-    echo "⚠️ WARNING: Current $backup_type data will be replaced!"
+    echo "Warning: Current $backup_type data will be replaced!"
     echo
     if (( BACKUP_ASSUME_YES )); then
-        echo "ℹ️ Auto-confirm enabled — proceeding with restore"
+        echo "Info: Auto-confirm enabled - proceeding with restore"
     else
         read -p "Are you absolutely sure? Type 'yes' to continue: " -r
         if [[ ! "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
@@ -721,28 +726,28 @@ restore_backup() {
     fi
     
     # Create pre-restore backup
-    echo "📦 Creating pre-restore safety backup..."
+    echo "Creating pre-restore safety backup..."
     local safety_backup_created=false
     case "$backup_type" in
         worlds)
             if backup_world >/dev/null 2>&1; then
                 safety_backup_created=true
-                echo "✅ Pre-restore world backup created"
+                echo "OK: Pre-restore world backup created"
             fi
             ;;
         configs)
             if backup_config >/dev/null 2>&1; then
                 safety_backup_created=true
-                echo "✅ Pre-restore config backup created"
+                echo "OK: Pre-restore config backup created"
             fi
             ;;
         full)
-            echo "⚠️ Full restore - safety backup skipped (would be too large)"
+            echo "Warning: Full restore - safety backup skipped (would be too large)"
             ;;
     esac
     
     # Perform restore
-    echo "🔄 Restoring from $filename..."
+    echo "Restoring from $filename..."
     local temp_extract="$TEMP_DIR/restore_$$"
     mkdir -p "$temp_extract"
     
@@ -768,12 +773,12 @@ restore_backup() {
                         else
                             cp -rf "$temp_extract/$relative_path" "$config_item"
                         fi
-                        echo "   ✅ Restored $relative_path"
+                        echo "   OK: Restored $relative_path"
                     fi
                 done
                 ;;
             full)
-                echo "⚠️ Full restore requires server to be offline"
+                echo "Warning: Full restore requires server to be offline"
                 if command -v rsync >/dev/null; then
                     rsync -avc --exclude="Logs/" --exclude="Backups/" "$temp_extract/$(basename "$BASE_DIR")/" "$BASE_DIR/"
                 else
@@ -784,17 +789,17 @@ restore_backup() {
         
         rm -rf "$temp_extract"
         log_backup "Restore completed: $filename" "SUCCESS"
-        echo "✅ Restore completed successfully!"
+        echo "OK: Restore completed successfully!"
         
         if [[ "$safety_backup_created" == "true" ]]; then
-            echo "💡 Pre-restore backup is available if you need to revert"
+            echo "Tip: Pre-restore backup is available if you need to revert"
         fi
         
         return 0
     else
         rm -rf "$temp_extract"
         log_backup "Restore failed: $filename" "ERROR"
-        echo "❌ Restore failed - original data unchanged"
+        echo "Error: Restore failed - original data unchanged"
         return 1
     fi
 }
@@ -802,7 +807,7 @@ restore_backup() {
 # Show enhanced help
 show_help() {
     cat << 'EOF'
-💾 tModLoader Enhanced Backup System
+tModLoader Backup System
 
 Comprehensive backup solution with compression, integrity checking, and safe restore
 
@@ -848,13 +853,13 @@ Automation Examples:
   0 4 * * * $SCRIPT_DIR/tmod-backup.sh cleanup
 
 Features:
-  ✅ Parallel compression (pigz) for faster backups
-  ✅ MD5 integrity verification with automatic repair
-  ✅ Safe restore with pre-restore backups
-  ✅ Automated retention policy with space reporting
-  ✅ Enhanced Discord notifications with timing/size
-  ✅ Comprehensive logging and error handling
-  ✅ Smart exclusion patterns to avoid bloat
+  - Parallel compression (pigz) for faster backups
+  - MD5 integrity verification with automatic repair
+  - Safe restore with pre-restore backups
+  - Automated retention policy with space reporting
+  - Enhanced Discord notifications with timing/size
+  - Comprehensive logging and error handling
+  - Smart exclusion patterns to avoid bloat
 EOF
 }
 

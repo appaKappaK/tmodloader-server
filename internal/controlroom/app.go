@@ -1,7 +1,8 @@
-package main
+package controlroom
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +15,9 @@ type actionKind int
 const (
 	actionRunCommand actionKind = iota
 	actionSelectWorld
+	actionEditModConfig
+	actionAddWorkshopMod
+	actionManageInstalledMods
 )
 
 type outputMode int
@@ -29,18 +33,28 @@ const (
 	uiModeNormal uiMode = iota
 	uiModeConfirm
 	uiModeWorldPicker
+	uiModeConfigPicker
+	uiModeWorkshopInput
+	uiModeModPicker
 )
 
 const overviewCategory = "Overview"
 const panelVerticalChrome = 2
 const panelHorizontalChrome = 3
 const panelHorizontalPadding = 2
+const actionPanelTotalWidth = 36
+const statusPanelMaxTotalWidth = 48
+const minAppWidth = actionPanelTotalWidth + 44
+const minAppHeight = 20
 
 type action struct {
 	category         string
 	title            string
 	description      string
 	command          []string
+	workDir          string
+	addonName        string
+	addonManifest    string
 	kind             actionKind
 	confirmText      string
 	startAfterSelect bool
@@ -69,12 +83,34 @@ type worldSetMsg struct {
 	err        error
 }
 
+type configListMsg struct {
+	configs []configOption
+	err     error
+}
+
+type configEditDoneMsg struct {
+	config configOption
+	err    error
+}
+
+type modListMsg struct {
+	mods []modOption
+	err  error
+}
+
+type modSaveMsg struct {
+	enabledCount int
+	changedCount int
+	err          error
+}
+
 type outputLineMsg struct {
 	text string
 }
 
 type commandDoneMsg struct {
-	action   string
+	act      action
+	label    string
 	duration time.Duration
 	err      error
 }
@@ -96,9 +132,10 @@ type model struct {
 	categoryIndex int
 	cursor        int
 
-	status      appStatus
-	statusError string
-	lastRefresh time.Time
+	status        appStatus
+	statusError   string
+	addonWarnings []string
+	lastRefresh   time.Time
 
 	logSources      []logSource
 	logSourceIndex  int
@@ -118,27 +155,68 @@ type model struct {
 	pendingAction action
 	worldOptions  []worldOption
 	worldCursor   int
+	configOptions []configOption
+	configCursor  int
+	workshopInput string
+	modOptions    []modOption
+	modCursor     int
 }
 
 type outputView struct {
-	title        string
-	subtitle     string
-	lines        []string
-	emptyState   string
-	offset       int
-	maxOffset    int
-	showOverflow bool
+	title      string
+	subtitle   string
+	lines      []string
+	emptyState string
+	indicator  string
+	offset     int
+	maxOffset  int
+}
+
+type hotkeyHint struct {
+	key    string
+	desc   string
+	active bool
+}
+
+func Run(baseDir string) error {
+	m := newModel(baseDir)
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseAllMotion())
+	m.program = p
+	_, err := p.Run()
+	return err
 }
 
 func newModel(baseDir string) *model {
+	actions := defaultActions()
+	addonActions, addonWarnings := loadAddonActions(baseDir)
+	actions = append(actions, addonActions...)
+
+	for _, warning := range addonWarnings {
+		appendControlLog(baseDir, warning, "WARN")
+	}
+
+	var initialOutput []string
+	if len(addonWarnings) > 0 {
+		initialOutput = []string{
+			fmt.Sprintf("[warn] %d addon load warning(s) detected during startup.", len(addonWarnings)),
+			"Addons with invalid manifests were skipped.",
+			"",
+		}
+		for _, warning := range addonWarnings {
+			initialOutput = append(initialOutput, "[warn] "+warning)
+		}
+		initialOutput = append(initialOutput, "", "Review Logs/control.log for the same warnings later.")
+	}
+
 	return &model{
 		baseDir:        baseDir,
-		actions:        defaultActions(),
-		categories:     []string{overviewCategory, "Server", "Workshop", "Backup", "Monitor", "Diagnostics", "Maintenance"},
+		actions:        actions,
+		categories:     categoriesForActions(actions),
 		logSources:     defaultLogSources(baseDir),
 		outputMode:     outputModeLogs,
+		addonWarnings:  addonWarnings,
 		footer:         "↑/↓ move • Enter open/run • Esc back • wheel scrolls 1 item • q quit • Ctrl+C force quit",
-		outputLines:    nil,
+		outputLines:    initialOutput,
 		categoryIndex:  0,
 		cursor:         0,
 		logSourceIndex: 0,
@@ -147,6 +225,10 @@ func newModel(baseDir string) *model {
 
 func (m *model) footerActive() bool {
 	return m.footer != "" && time.Now().Before(m.footerTimestamp)
+}
+
+func (m *model) minimumSizeOK() bool {
+	return m.width >= minAppWidth && m.height >= minAppHeight
 }
 
 func joinHeaderBits(bits []string) string {
@@ -170,6 +252,17 @@ func joinHeaderBits(bits []string) string {
 	return joined
 }
 
+func (m *model) headerStatusBits() []string {
+	bits := []string{}
+	if m.running {
+		bits = append(bits, runningStyle.Render(spinnerFrames[m.spinnerIndex]+" "+m.activeAction))
+	}
+	if len(m.addonWarnings) > 0 {
+		bits = append(bits, infoStyle.Render(fmt.Sprintf("addon warnings: %d (Tab for details)", len(m.addonWarnings))))
+	}
+	return bits
+}
+
 func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		refreshStatusCmd(m.baseDir),
@@ -189,21 +282,39 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.ClearScreen
 
 	case tea.MouseMsg:
+		if m.ready && !m.minimumSizeOK() {
+			return m, nil
+		}
 		switch m.uiMode {
 		case uiModeConfirm:
 			return m, nil
 		case uiModeWorldPicker:
 			return m.handleWorldPickerMouse(msg)
+		case uiModeConfigPicker:
+			return m.handleConfigPickerMouse(msg)
+		case uiModeWorkshopInput:
+			return m.handleWorkshopInputMouse(msg)
+		case uiModeModPicker:
+			return m.handleModPickerMouse(msg)
 		default:
 			return m.handleNormalMouse(msg)
 		}
 
 	case tea.KeyMsg:
+		if m.ready && !m.minimumSizeOK() {
+			return m.handleSmallWindowKeys(msg)
+		}
 		switch m.uiMode {
 		case uiModeConfirm:
 			return m.handleConfirmKeys(msg)
 		case uiModeWorldPicker:
 			return m.handleWorldPickerKeys(msg)
+		case uiModeConfigPicker:
+			return m.handleConfigPickerKeys(msg)
+		case uiModeWorkshopInput:
+			return m.handleWorkshopInputKeys(msg)
+		case uiModeModPicker:
+			return m.handleModPickerKeys(msg)
 		default:
 			return m.handleNormalKeys(msg)
 		}
@@ -272,6 +383,85 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, refreshStatusCmd(m.baseDir)
 
+	case configListMsg:
+		if msg.err != nil {
+			m.configOptions = nil
+			m.configCursor = 0
+			m.setFooter("Unable to load mod configs: "+msg.err.Error(), 4*time.Second)
+			return m, nil
+		}
+		m.configOptions = msg.configs
+		m.configCursor = 0
+		if len(msg.configs) == 0 {
+			m.outputMode = outputModeCommand
+			m.outputLines = []string{"No mod config files were found under ModConfigs/ or other repo-local config directories."}
+			m.setFooter("No mod config files found.", 4*time.Second)
+			return m, nil
+		}
+		m.uiMode = uiModeConfigPicker
+		m.outputMode = outputModeCommand
+		m.commandXOffset = 0
+		m.outputLines = []string{"Select a config file and press Enter to open it in your terminal editor."}
+		m.setFooter("Mod config picker opened. Enter to edit, Esc to cancel.", 4*time.Second)
+		return m, nil
+
+	case configEditDoneMsg:
+		m.running = false
+		m.activeAction = ""
+		m.activeSince = time.Time{}
+		if msg.err != nil {
+			m.appendOutput("✗ Failed to edit config: " + msg.err.Error())
+			m.setFooter("Failed to open editor for "+msg.config.RelPath+".", 4*time.Second)
+			return m, nil
+		}
+		m.appendOutput(fmt.Sprintf("✓ Finished editing %s", msg.config.RelPath))
+		m.setFooter("Finished editing "+msg.config.RelPath+".", 4*time.Second)
+		return m, nil
+
+	case modListMsg:
+		if msg.err != nil {
+			m.modOptions = nil
+			m.modCursor = 0
+			m.setFooter("Unable to load installed mods: "+msg.err.Error(), 4*time.Second)
+			return m, nil
+		}
+		m.modOptions = msg.mods
+		m.modCursor = 0
+		if len(msg.mods) == 0 {
+			m.outputMode = outputModeCommand
+			m.outputLines = []string{"No installed .tmod files were found under Mods/. Run Workshop / Sync Mods first."}
+			m.setFooter("No installed mods found.", 4*time.Second)
+			return m, nil
+		}
+		m.uiMode = uiModeModPicker
+		m.outputMode = outputModeCommand
+		m.commandXOffset = 0
+		m.outputLines = []string{"Toggle installed mods, then press S to save the load list."}
+		m.setFooter("Mod load manager opened. Enter toggles, S saves, Esc cancels.", 4*time.Second)
+		return m, nil
+
+	case modSaveMsg:
+		m.running = false
+		m.activeAction = ""
+		m.activeSince = time.Time{}
+		if msg.err != nil {
+			m.appendOutput("✗ Failed to save mod load selection: " + msg.err.Error())
+			m.setFooter("Failed to save enabled.json.", 4*time.Second)
+			return m, nil
+		}
+		m.modOptions = nil
+		m.modCursor = 0
+		m.appendOutput(fmt.Sprintf("✓ Saved enabled.json with %d enabled mod(s)", msg.enabledCount))
+		if msg.changedCount == 0 {
+			m.setFooter("enabled.json was already up to date.", 4*time.Second)
+		} else if m.status.Online {
+			m.appendOutput("Info: Server is running; restart required for mod load changes to take effect.")
+			m.setFooter("Saved mod load selection. Restart the server to apply it.", 4*time.Second)
+		} else {
+			m.setFooter("Saved mod load selection.", 4*time.Second)
+		}
+		return m, nil
+
 	case outputLineMsg:
 		m.appendOutput(msg.text)
 		m.outputMode = outputModeCommand
@@ -282,11 +472,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeAction = ""
 		m.activeSince = time.Time{}
 		if msg.err != nil {
-			m.appendOutput(fmt.Sprintf("✗ %s failed after %s: %v", msg.action, msg.duration.Round(time.Second), msg.err))
-			m.setFooter(msg.action+" failed.", 4*time.Second)
+			if msg.act.isAddonAction() {
+				m.appendOutput(fmt.Sprintf("✗ Addon action %s failed after %s: %v", msg.label, msg.duration.Round(time.Second), msg.err))
+				m.appendAddonFailureDetails(msg.act, msg.err)
+			} else {
+				m.appendOutput(fmt.Sprintf("✗ %s failed after %s: %v", msg.label, msg.duration.Round(time.Second), msg.err))
+			}
+			m.setFooter(msg.label+" failed.", 4*time.Second)
 		} else {
-			m.appendOutput(fmt.Sprintf("✓ %s finished in %s", msg.action, msg.duration.Round(time.Second)))
-			m.setFooter(msg.action+" finished successfully.", 4*time.Second)
+			m.appendOutput(fmt.Sprintf("✓ %s finished in %s", msg.label, msg.duration.Round(time.Second)))
+			m.setFooter(msg.label+" finished successfully.", 4*time.Second)
 		}
 		return m, tea.Batch(
 			refreshStatusCmd(m.baseDir),
@@ -342,35 +537,18 @@ func (m *model) handleNormalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter":
-		if m.running {
-			m.setFooter("A command is already running.", 2*time.Second)
-			return m, nil
-		}
-		if m.currentCategory() == overviewCategory {
-			category, ok := m.selectedCategoryEntry()
-			if !ok {
-				return m, nil
-			}
-			m.openCategory(category)
-			return m, nil
-		}
-		act, ok := m.selectedAction()
-		if !ok {
-			return m, nil
-		}
-		return m, m.triggerAction(act)
+		return m, m.activateCurrentSelection()
 	case "r":
 		m.setFooter("Refreshing status and current log…", 2*time.Second)
 		return m, tea.Batch(refreshStatusCmd(m.baseDir), refreshLogCmd(m.currentLogSource()))
 	case "l":
+		if m.outputMode != outputModeLogs {
+			return m, nil
+		}
 		m.logSourceIndex = (m.logSourceIndex + 1) % len(m.logSources)
 		m.logXOffset = 0
-		if m.outputMode == outputModeLogs {
-			m.setFooter("Switched log source to "+m.currentLogSource().label+".", 2*time.Second)
-			return m, refreshLogCmd(m.currentLogSource())
-		}
-		m.setFooter("Next log source: "+m.currentLogSource().label+". Press Tab to view.", 2*time.Second)
-		return m, nil
+		m.setFooter("Switched log source to "+m.currentLogSource().label+".", 2*time.Second)
+		return m, refreshLogCmd(m.currentLogSource())
 	case "tab":
 		if m.outputMode == outputModeLogs {
 			m.outputMode = outputModeCommand
@@ -386,28 +564,47 @@ func (m *model) handleNormalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) handleNormalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress {
+func (m *model) handleSmallWindowKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "q":
+		return m, tea.Quit
+	default:
 		return m, nil
 	}
-	if m.mouseOverActionPanel(msg.X) {
+}
+
+func (m *model) handleNormalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.mouseOverActionPanel(msg.X, msg.Y) {
+		if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonNone {
+			index, ok := m.actionPanelListIndexAt(msg.Y)
+			if ok {
+				m.cursor = index
+			}
+			return m, nil
+		}
+		if msg.Action != tea.MouseActionPress {
+			return m, nil
+		}
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
 			m.moveCursor(-1)
 		case tea.MouseButtonWheelDown:
 			m.moveCursor(1)
+		case tea.MouseButtonLeft:
+			index, ok := m.actionPanelListIndexAt(msg.Y)
+			if !ok {
+				return m, nil
+			}
+			m.cursor = index
+			return m, m.activateCurrentSelection()
 		}
 		return m, nil
 	}
 	if !m.mouseOverOutputPanel(msg.X, msg.Y) {
 		return m, nil
 	}
-
-	switch msg.Button {
-	case tea.MouseButtonWheelLeft:
-		m.shiftOutputScroll(-6)
-	case tea.MouseButtonWheelRight:
-		m.shiftOutputScroll(6)
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
 	}
 
 	return m, nil
@@ -449,27 +646,134 @@ func (m *model) handleWorldPickerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveWorldCursor(1)
 		return m, nil
 	case "enter":
-		if len(m.worldOptions) == 0 {
+		return m, m.activateWorldSelection()
+	}
+
+	return m, nil
+}
+
+func (m *model) handleConfigPickerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "q", "esc":
+		m.uiMode = uiModeNormal
+		m.configOptions = nil
+		m.configCursor = 0
+		m.setFooter("Mod config selection cancelled.", 2*time.Second)
+		return m, nil
+	case "up", "k":
+		m.moveConfigCursor(-1)
+		return m, nil
+	case "down", "j":
+		m.moveConfigCursor(1)
+		return m, nil
+	case "enter":
+		return m, m.activateConfigSelection()
+	}
+
+	return m, nil
+}
+
+func (m *model) handleWorkshopInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.uiMode = uiModeNormal
+		m.workshopInput = ""
+		m.setFooter("Workshop mod add cancelled.", 2*time.Second)
+		return m, nil
+	case "enter":
+		input := strings.TrimSpace(m.workshopInput)
+		if input == "" {
+			m.setFooter("Enter a Workshop URL or numeric ID first.", 3*time.Second)
 			return m, nil
 		}
-		selected := m.worldOptions[m.worldCursor]
+		m.uiMode = uiModeNormal
+		m.workshopInput = ""
+		act := action{
+			category:    "Workshop",
+			title:       "Workshop / Add Mod by URL or ID",
+			description: "Add a Workshop URL or numeric ID to mod_ids.txt.",
+			command:     []string{"bash", "Scripts/steam/tmod-workshop.sh", "mods", "add", "--yes", input},
+		}
+		m.startAction(act)
+		return m, nil
+	case "backspace", "ctrl+h":
+		runes := []rune(m.workshopInput)
+		if len(runes) > 0 {
+			m.workshopInput = string(runes[:len(runes)-1])
+		}
+		return m, nil
+	case "ctrl+u":
+		m.workshopInput = ""
+		return m, nil
+	}
+
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 0 {
+		m.workshopInput += string(msg.Runes)
+	}
+
+	return m, nil
+}
+
+func (m *model) handleModPickerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "q", "esc":
+		m.uiMode = uiModeNormal
+		m.modOptions = nil
+		m.modCursor = 0
+		m.setFooter("Mod load changes discarded.", 2*time.Second)
+		return m, nil
+	case "up", "k":
+		m.moveModCursor(-1)
+		return m, nil
+	case "down", "j":
+		m.moveModCursor(1)
+		return m, nil
+	case " ", "enter":
+		m.toggleCurrentMod()
+		return m, nil
+	case "a":
+		m.setAllModsEnabled(true)
+		return m, nil
+	case "n":
+		m.setAllModsEnabled(false)
+		return m, nil
+	case "s":
+		if len(m.modOptions) == 0 {
+			return m, nil
+		}
 		m.uiMode = uiModeNormal
 		m.running = true
-		m.activeAction = "Set Active World"
+		m.activeAction = "Save Mod Selection"
 		m.activeSince = time.Now()
 		m.outputMode = outputModeCommand
 		m.outputLines = []string{
-			fmt.Sprintf("Applying active world: %s", selected.Name),
+			"Saving mod load selection to Mods/enabled.json…",
 			"",
 		}
-		m.setFooter("Setting active world to "+selected.Name+"…", 3*time.Second)
-		return m, setWorldCmd(m.baseDir, selected, m.pendingAction.startAfterSelect)
+		m.setFooter("Saving mod load selection…", 3*time.Second)
+		return m, saveModSelectionCmd(m.baseDir, m.modOptions)
 	}
 
 	return m, nil
 }
 
 func (m *model) handleWorldPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.mouseOverOutputPanel(msg.X, msg.Y) {
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonNone {
+		index, ok := m.worldPickerIndexAt(msg.Y)
+		if ok {
+			m.worldCursor = index
+		}
+		return m, nil
+	}
 	if msg.Action != tea.MouseActionPress {
 		return m, nil
 	}
@@ -479,15 +783,166 @@ func (m *model) handleWorldPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.moveWorldCursor(-1)
 	case tea.MouseButtonWheelDown:
 		m.moveWorldCursor(1)
+	case tea.MouseButtonLeft:
+		index, ok := m.worldPickerIndexAt(msg.Y)
+		if !ok {
+			return m, nil
+		}
+		m.worldCursor = index
+		return m, m.activateWorldSelection()
 	}
 
 	return m, nil
+}
+
+func (m *model) handleConfigPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.mouseOverOutputPanel(msg.X, msg.Y) {
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonNone {
+		index, ok := m.configPickerIndexAt(msg.Y)
+		if ok {
+			m.configCursor = index
+		}
+		return m, nil
+	}
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.moveConfigCursor(-1)
+	case tea.MouseButtonWheelDown:
+		m.moveConfigCursor(1)
+	case tea.MouseButtonLeft:
+		index, ok := m.configPickerIndexAt(msg.Y)
+		if !ok {
+			return m, nil
+		}
+		m.configCursor = index
+		return m, m.activateConfigSelection()
+	}
+
+	return m, nil
+}
+
+func (m *model) handleWorkshopInputMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	if !m.mouseOverOutputPanel(msg.X, msg.Y) {
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *model) handleModPickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if !m.mouseOverOutputPanel(msg.X, msg.Y) {
+		return m, nil
+	}
+	if msg.Action == tea.MouseActionMotion && msg.Button == tea.MouseButtonNone {
+		index, ok := m.modPickerIndexAt(msg.Y)
+		if ok {
+			m.modCursor = index
+		}
+		return m, nil
+	}
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.moveModCursor(-1)
+	case tea.MouseButtonWheelDown:
+		m.moveModCursor(1)
+	case tea.MouseButtonLeft:
+		index, ok := m.modPickerIndexAt(msg.Y)
+		if !ok {
+			return m, nil
+		}
+		m.modCursor = index
+		m.toggleCurrentMod()
+	}
+
+	return m, nil
+}
+
+func (m *model) activateCurrentSelection() tea.Cmd {
+	if m.running {
+		m.setFooter("A command is already running.", 2*time.Second)
+		return nil
+	}
+	if m.currentCategory() == overviewCategory {
+		category, ok := m.selectedCategoryEntry()
+		if !ok {
+			return nil
+		}
+		m.openCategory(category)
+		return nil
+	}
+	act, ok := m.selectedAction()
+	if !ok {
+		return nil
+	}
+	return m.triggerAction(act)
+}
+
+func (m *model) activateWorldSelection() tea.Cmd {
+	if len(m.worldOptions) == 0 {
+		return nil
+	}
+	selected := m.worldOptions[m.worldCursor]
+	m.uiMode = uiModeNormal
+	m.running = true
+	m.activeAction = "Set Active World"
+	m.activeSince = time.Now()
+	m.outputMode = outputModeCommand
+	m.outputLines = []string{
+		fmt.Sprintf("Applying active world: %s", selected.Name),
+		"",
+	}
+	m.setFooter("Setting active world to "+selected.Name+"…", 3*time.Second)
+	return setWorldCmd(m.baseDir, selected, m.pendingAction.startAfterSelect)
+}
+
+func (m *model) activateConfigSelection() tea.Cmd {
+	if len(m.configOptions) == 0 {
+		return nil
+	}
+	selected := m.configOptions[m.configCursor]
+	m.uiMode = uiModeNormal
+	m.configOptions = nil
+	m.configCursor = 0
+	m.running = true
+	m.activeAction = "Edit Mod Config"
+	m.activeSince = time.Now()
+	m.outputMode = outputModeCommand
+	m.outputLines = []string{
+		fmt.Sprintf("Opening %s in your terminal editor…", selected.RelPath),
+		"",
+	}
+	m.setFooter("Opening "+selected.RelPath+" in editor…", 3*time.Second)
+	return editModConfigCmd(m.baseDir, selected)
 }
 
 func (m *model) triggerAction(act action) tea.Cmd {
 	switch act.kind {
 	case actionSelectWorld:
 		return listWorldsCmd(m.baseDir, act.startAfterSelect)
+	case actionEditModConfig:
+		return listModConfigsCmd(m.baseDir)
+	case actionAddWorkshopMod:
+		m.uiMode = uiModeWorkshopInput
+		m.workshopInput = ""
+		m.outputMode = outputModeCommand
+		m.commandXOffset = 0
+		m.outputLines = []string{"Paste a Workshop URL or numeric ID, then press Enter to add it to mod_ids.txt."}
+		m.setFooter("Workshop URL or ID entry opened. Enter adds, Esc cancels.", 4*time.Second)
+		return nil
+	case actionManageInstalledMods:
+		return listInstalledModsCmd(m.baseDir)
 	default:
 		if act.confirmText != "" {
 			m.uiMode = uiModeConfirm
@@ -504,10 +959,25 @@ func (m *model) View() string {
 	if !m.ready {
 		return "Loading tModLoader control room…"
 	}
+	if !m.minimumSizeOK() {
+		return m.renderMinimumSizeView()
+	}
 
 	header := m.renderHeader()
 	body := lipgloss.JoinHorizontal(lipgloss.Top, m.renderActionPanel(), m.renderRightColumn())
 	return lipgloss.JoinVertical(lipgloss.Left, header, body)
+}
+
+func (m *model) renderMinimumSizeView() string {
+	lines := []string{
+		sectionTitleStyle.Render("Window Too Small"),
+		sectionMutedStyle.Render(fmt.Sprintf("Resize the terminal to at least %dx%d.", minAppWidth, minAppHeight)),
+		sectionMutedStyle.Render(fmt.Sprintf("Current size: %dx%d", m.width, m.height)),
+		"",
+		sectionMutedStyle.Render("q or Ctrl+C quits."),
+	}
+	body := strings.Join(lines, "\n")
+	return lipgloss.Place(max(1, m.width), max(1, m.height), lipgloss.Center, lipgloss.Center, body)
 }
 
 func (m *model) renderHeader() string {
@@ -521,11 +991,7 @@ func (m *model) renderHeader() string {
 		stateStyle = stateOnlineStyle
 	}
 
-	statusBits := []string{}
-
-	if m.running {
-		statusBits = append(statusBits, runningStyle.Render(spinnerFrames[m.spinnerIndex]+" "+m.activeAction))
-	}
+	statusBits := m.headerStatusBits()
 
 	headerLine := lipgloss.JoinHorizontal(
 		lipgloss.Left,
@@ -536,27 +1002,6 @@ func (m *model) renderHeader() string {
 		subtitle,
 	)
 	statusLine := joinHeaderBits(statusBits)
-	if m.footerActive() {
-		available := m.width - lipgloss.Width(headerLine) - 4
-		if available > 8 {
-			headerLine = lipgloss.JoinHorizontal(
-				lipgloss.Left,
-				headerLine,
-				infoStyle.Render(" • "+fitLine(m.footer, available)),
-			)
-		} else if statusLine == "" {
-			statusLine = infoStyle.Render(fitLine(m.footer, m.width-4))
-		} else {
-			available = m.width - lipgloss.Width(statusLine) - 6
-			if available > 4 {
-				statusLine = lipgloss.JoinHorizontal(
-					lipgloss.Left,
-					statusLine,
-					infoStyle.Render(" • "+fitLine(m.footer, available)),
-				)
-			}
-		}
-	}
 
 	lines := []string{headerLine}
 	if statusLine != "" {
@@ -570,12 +1015,14 @@ func (m *model) renderHeader() string {
 }
 
 func (m *model) renderActionPanel() string {
-	panelTotalWidth := clamp(m.width/3, 36, 52)
+	panelTotalWidth := actionPanelTotalWidth
 	panelWidth := availablePanelContentWidth(panelTotalWidth)
 	textWidth := panelInnerTextWidth(panelWidth)
 	contentHeight := availablePanelContentHeight(m.bodyHeight())
+	hotkeyRows := m.renderHotkeyLegend(textWidth)
+	hotkeyFootprint := panelBlockFootprint(hotkeyRows)
 	if m.currentCategory() == overviewCategory {
-		return m.renderOverviewPanel(panelWidth, contentHeight)
+		return m.renderOverviewPanel(panelWidth, contentHeight, hotkeyRows, hotkeyFootprint)
 	}
 
 	lines := []string{
@@ -585,7 +1032,7 @@ func (m *model) renderActionPanel() string {
 	}
 
 	filtered := m.filteredActions()
-	visibleSlots := max(1, contentHeight-12)
+	visibleSlots := max(1, contentHeight-5-hotkeyFootprint)
 	start, end := visibleWindow(len(filtered), visibleSlots, m.cursor)
 
 	if start > 0 {
@@ -609,10 +1056,12 @@ func (m *model) renderActionPanel() string {
 		lines = append(lines, sectionMutedStyle.Render("  …"))
 	}
 
+	lines = m.appendBottomPanelBlock(lines, hotkeyRows, contentHeight)
+	lines = truncatePanelLines(lines, contentHeight)
 	return panelStyle.Width(panelWidth).Height(contentHeight).Render(strings.Join(lines, "\n"))
 }
 
-func (m *model) renderOverviewPanel(panelWidth int, contentHeight int) string {
+func (m *model) renderOverviewPanel(panelWidth int, contentHeight int, hotkeyRows []string, hotkeyFootprint int) string {
 	textWidth := panelInnerTextWidth(panelWidth)
 	lines := []string{
 		m.renderCategoryTabs(textWidth),
@@ -622,7 +1071,7 @@ func (m *model) renderOverviewPanel(panelWidth int, contentHeight int) string {
 
 	entries := m.categoryEntries()
 	nameWidth := m.overviewNameWidth()
-	visibleSlots := max(1, contentHeight-11)
+	visibleSlots := max(1, contentHeight-5-hotkeyFootprint)
 	start, end := visibleWindow(len(entries), visibleSlots, m.cursor)
 
 	if start > 0 {
@@ -646,6 +1095,8 @@ func (m *model) renderOverviewPanel(panelWidth int, contentHeight int) string {
 		lines = append(lines, sectionMutedStyle.Render("  …"))
 	}
 
+	lines = m.appendBottomPanelBlock(lines, hotkeyRows, contentHeight)
+	lines = truncatePanelLines(lines, contentHeight)
 	return panelStyle.Width(panelWidth).Height(contentHeight).Render(strings.Join(lines, "\n"))
 }
 
@@ -662,14 +1113,183 @@ func (m *model) renderCategoryTabs(width int) string {
 func (m *model) renderRightColumn() string {
 	_, rightTotalWidth, statusTotalHeight, outputTotalHeight := m.rightColumnLayout()
 	rightWidth := availablePanelContentWidth(rightTotalWidth)
+	statusTotalWidth := min(rightTotalWidth, statusPanelMaxTotalWidth)
+	statusWidth := availablePanelContentWidth(statusTotalWidth)
 
 	statusContentHeight := availablePanelContentHeight(statusTotalHeight)
 	outputContentHeight := availablePanelContentHeight(outputTotalHeight)
 
-	statusPanel := panelStyle.Width(rightWidth).Height(statusContentHeight).Render(m.renderStatusPanel(panelInnerTextWidth(rightWidth), statusContentHeight))
+	statusPanel := panelStyle.Width(statusWidth).Height(statusContentHeight).Render(m.renderStatusPanel(panelInnerTextWidth(statusWidth), statusContentHeight))
 	outputPanel := panelStyle.Width(rightWidth).Height(outputContentHeight).Render(m.renderOutputPanel(panelInnerTextWidth(rightWidth), outputContentHeight))
 
 	return lipgloss.JoinVertical(lipgloss.Left, statusPanel, outputPanel)
+}
+
+func (m *model) renderHotkeyLegend(width int) []string {
+	if width <= 0 {
+		return nil
+	}
+
+	rows := []string{
+		hotkeyTitleStyle.Render("Hotkeys"),
+	}
+
+	hints := m.hotkeyHints()
+	if len(hints) == 0 {
+		return rows
+	}
+
+	for _, hint := range hints {
+		rows = append(rows, renderHotkeyCell(hint, width))
+	}
+
+	return rows
+}
+
+func renderHotkeyCell(hint hotkeyHint, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	keyLabel := formatHotkeyLabel(hint.key)
+	keyWidth := min(9, max(5, width/2))
+	if keyWidth >= width {
+		keyWidth = max(1, width-1)
+	}
+	descWidth := width - keyWidth - 1
+
+	keyStyle := hotkeyInactiveKeyStyle
+	descStyle := hotkeyInactiveDescStyle
+	if hint.active {
+		keyStyle = hotkeyActiveKeyStyle
+		descStyle = hotkeyActiveDescStyle
+	}
+
+	if descWidth <= 0 {
+		return keyStyle.Render(fitAndPadLine(keyLabel, width))
+	}
+
+	keyText := keyStyle.Render(fitAndPadLine(keyLabel, keyWidth))
+	descText := descStyle.Render(fitLine(hint.desc, descWidth))
+	padding := width - lipgloss.Width(keyText) - 1 - lipgloss.Width(descText)
+	if padding < 0 {
+		padding = 0
+	}
+
+	return keyText + " " + descText + strings.Repeat(" ", padding)
+}
+
+func renderWorkshopInputField(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	prompt := "> "
+	cursor := "█"
+	if strings.TrimSpace(value) == "" {
+		return inputFieldStyle.Render(fitAndPadLine(prompt+cursor, width))
+	}
+
+	available := max(1, width-len([]rune(prompt))-len([]rune(cursor)))
+	runes := []rune(value)
+	if len(runes) > available {
+		runes = runes[len(runes)-available:]
+	}
+
+	return inputFieldStyle.Render(fitAndPadLine(prompt+string(runes)+cursor, width))
+}
+
+func formatHotkeyLabel(label string) string {
+	if len([]rune(label)) != 1 {
+		return label
+	}
+	return strings.ToUpper(label)
+}
+
+func (m *model) hotkeyHints() []hotkeyHint {
+	switch m.uiMode {
+	case uiModeConfirm:
+		return []hotkeyHint{
+			{key: "Up/Down", desc: "move", active: false},
+			{key: "Enter/y", desc: "confirm", active: true},
+			{key: "Esc/n", desc: "cancel", active: true},
+			{key: "Tab", desc: "swap view", active: false},
+			{key: "l", desc: "next log", active: false},
+			{key: "r", desc: "refresh", active: false},
+			{key: "q", desc: "cancel", active: true},
+			{key: "Ctrl+C", desc: "force quit", active: true},
+		}
+	case uiModeWorldPicker:
+		return []hotkeyHint{
+			{key: "Up/Down", desc: "move", active: true},
+			{key: "Enter", desc: "set world", active: true},
+			{key: "Esc", desc: "cancel", active: true},
+			{key: "Tab", desc: "swap view", active: false},
+			{key: "l", desc: "next log", active: false},
+			{key: "r", desc: "refresh", active: false},
+			{key: "q", desc: "cancel", active: true},
+			{key: "Ctrl+C", desc: "force quit", active: true},
+		}
+	case uiModeConfigPicker:
+		return []hotkeyHint{
+			{key: "Up/Down", desc: "move", active: true},
+			{key: "Enter", desc: "edit file", active: true},
+			{key: "Esc", desc: "cancel", active: true},
+			{key: "Tab", desc: "swap view", active: false},
+			{key: "l", desc: "next log", active: false},
+			{key: "r", desc: "refresh", active: false},
+			{key: "q", desc: "cancel", active: true},
+			{key: "Ctrl+C", desc: "force quit", active: true},
+		}
+	case uiModeWorkshopInput:
+		return []hotkeyHint{
+			{key: "Type", desc: "enter url/id", active: true},
+			{key: "Enter", desc: "add mod", active: true},
+			{key: "Backspace", desc: "erase", active: true},
+			{key: "Ctrl+U", desc: "clear", active: true},
+			{key: "Esc", desc: "cancel", active: true},
+			{key: "Tab", desc: "swap view", active: false},
+			{key: "l", desc: "next log", active: false},
+			{key: "r", desc: "refresh", active: false},
+			{key: "Ctrl+C", desc: "force quit", active: true},
+		}
+	case uiModeModPicker:
+		return []hotkeyHint{
+			{key: "Up/Down", desc: "move", active: true},
+			{key: "Enter", desc: "toggle", active: true},
+			{key: "A", desc: "enable all", active: true},
+			{key: "N", desc: "disable all", active: true},
+			{key: "S", desc: "save", active: true},
+			{key: "Esc", desc: "cancel", active: true},
+			{key: "Tab", desc: "swap view", active: false},
+			{key: "l", desc: "next log", active: false},
+			{key: "q", desc: "cancel", active: true},
+			{key: "Ctrl+C", desc: "force quit", active: true},
+		}
+	default:
+		if m.outputMode == outputModeLogs {
+			return []hotkeyHint{
+				{key: "Up/Down", desc: "move", active: true},
+				{key: "Enter", desc: "open/run", active: true},
+				{key: "Esc", desc: "back", active: true},
+				{key: "Tab", desc: "command out", active: true},
+				{key: "l", desc: "next log", active: true},
+				{key: "r", desc: "refresh", active: true},
+				{key: "q", desc: "quit", active: true},
+				{key: "Ctrl+C", desc: "force quit", active: true},
+			}
+		}
+		return []hotkeyHint{
+			{key: "Up/Down", desc: "move", active: true},
+			{key: "Enter", desc: "open/run", active: true},
+			{key: "Esc", desc: "back", active: true},
+			{key: "Tab", desc: "log tail", active: true},
+			{key: "l", desc: "next log", active: false},
+			{key: "r", desc: "refresh", active: true},
+			{key: "q", desc: "quit", active: true},
+			{key: "Ctrl+C", desc: "force quit", active: true},
+		}
+	}
 }
 
 func (m *model) renderStatusPanel(width, height int) string {
@@ -700,26 +1320,37 @@ func (m *model) renderOutputPanel(width, height int) string {
 		return m.renderConfirmPanel(width, height)
 	case uiModeWorldPicker:
 		return m.renderWorldPickerPanel(width, height)
+	case uiModeConfigPicker:
+		return m.renderConfigPickerPanel(width, height)
+	case uiModeWorkshopInput:
+		return m.renderWorkshopInputPanel(width, height)
+	case uiModeModPicker:
+		return m.renderModPickerPanel(width, height)
 	}
 
 	view := m.buildOutputView(width, height)
+	bodyHeight := max(1, height-3)
 
 	rendered := []string{
 		outputHeaderTitleStyle.Width(width).Render(view.title),
 	}
 	rendered = append(rendered, outputHeaderMetaStyle.Width(width).Render(fitLine(view.subtitle, width)))
 	if view.emptyState != "" {
-		bodyHeight := max(1, height-2)
 		placeholder := lipgloss.Place(width, bodyHeight, lipgloss.Center, lipgloss.Center, outputPlaceholderStyle.Render(view.emptyState))
 		rendered = append(rendered, placeholder)
+		rendered = append(rendered, outputIndicatorStyle.Render(fitLine(view.indicator, width)))
 		return strings.Join(rendered, "\n")
 	}
-	for _, line := range view.lines {
-		rendered = append(rendered, outputBodyStyle.Render(fitLine(line, width)))
+
+	bodyLines := make([]string, 0, bodyHeight)
+	for _, line := range truncatePanelLines(view.lines, bodyHeight) {
+		bodyLines = append(bodyLines, outputBodyStyle.Width(width).Render(fitLine(line, width)))
 	}
-	if view.showOverflow {
-		rendered = append(rendered, outputIndicatorStyle.Render(fitLine(renderOutputIndicator(view.offset, view.maxOffset, width), width)))
+	for len(bodyLines) < bodyHeight {
+		bodyLines = append(bodyLines, outputBodyStyle.Width(width).Render(""))
 	}
+	rendered = append(rendered, bodyLines...)
+	rendered = append(rendered, outputIndicatorStyle.Render(fitLine(view.indicator, width)))
 	return strings.Join(rendered, "\n")
 }
 
@@ -777,6 +1408,112 @@ func (m *model) renderWorldPickerPanel(width, height int) string {
 
 	lines = append(lines, "")
 	lines = append(lines, sectionMutedStyle.Render("Esc cancels without changes."))
+	lines = truncatePanelLines(lines, height)
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) renderConfigPickerPanel(width, height int) string {
+	lines := []string{
+		sectionTitleStyle.Render("Mod Config Picker"),
+		sectionMutedStyle.Render("Select a config file, then press Enter to open it in your editor."),
+	}
+
+	if len(m.configOptions) == 0 {
+		lines = append(lines, "No mod config files found.")
+		return strings.Join(lines, "\n")
+	}
+
+	visibleSlots := max(1, height-6)
+	start, end := visibleWindow(len(m.configOptions), visibleSlots, m.configCursor)
+	if start > 0 {
+		lines = append(lines, sectionMutedStyle.Render("  …"))
+	}
+
+	for i := start; i < end; i++ {
+		config := m.configOptions[i]
+		prefix := "  "
+		style := actionStyle
+		if i == m.configCursor {
+			prefix = "▶ "
+			style = selectedActionStyle
+		}
+
+		lines = append(lines, style.Render(fitLine(prefix+config.RelPath, width)))
+		lines = append(lines, actionDescStyle.Render(fitLine(fmt.Sprintf("  %s  %s", config.Size, config.Modified), width)))
+	}
+
+	if end < len(m.configOptions) {
+		lines = append(lines, sectionMutedStyle.Render("  …"))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, sectionMutedStyle.Render("Esc cancels without opening a file."))
+	lines = truncatePanelLines(lines, height)
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) renderWorkshopInputPanel(width, height int) string {
+	lines := []string{
+		sectionTitleStyle.Render("Add Workshop Mod"),
+		sectionMutedStyle.Render("Paste a Steam Workshop URL or numeric ID, then press Enter to add it to mod_ids.txt."),
+		"",
+		renderWorkshopInputField(m.workshopInput, width),
+		"",
+		sectionMutedStyle.Render("Examples:"),
+		sectionMutedStyle.Render(fitLine("  2824688804", width)),
+		sectionMutedStyle.Render(fitLine("  https://steamcommunity.com/sharedfiles/filedetails/?id=2824688804", width)),
+		"",
+		sectionMutedStyle.Render("Esc cancels without changes."),
+	}
+	lines = truncatePanelLines(lines, height)
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) renderModPickerPanel(width, height int) string {
+	lines := []string{
+		sectionTitleStyle.Render("Mod Load Manager"),
+		sectionMutedStyle.Render(m.modPickerSummary(width)),
+	}
+
+	if len(m.modOptions) == 0 {
+		lines = append(lines, "No installed mods found.")
+		return strings.Join(lines, "\n")
+	}
+
+	visibleSlots := max(1, height-6)
+	start, end := visibleWindow(len(m.modOptions), visibleSlots, m.modCursor)
+	if start > 0 {
+		lines = append(lines, sectionMutedStyle.Render("  …"))
+	}
+
+	for i := start; i < end; i++ {
+		mod := m.modOptions[i]
+		prefix := "  "
+		style := actionStyle
+		if i == m.modCursor {
+			prefix = "▶ "
+			style = selectedActionStyle
+		}
+
+		state := "[off]"
+		if mod.Enabled {
+			state = "[ON ]"
+		}
+		changed := ""
+		if mod.Enabled != mod.OriginalEnabled {
+			changed = " *"
+		}
+
+		lines = append(lines, style.Render(fitLine(prefix+state+" "+mod.Name+changed, width)))
+	}
+
+	if end < len(m.modOptions) {
+		lines = append(lines, sectionMutedStyle.Render("  …"))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, sectionMutedStyle.Render("S saves to enabled.json  |  A enable all  |  N disable all"))
+	lines = append(lines, sectionMutedStyle.Render("Esc cancels without saving."))
 	lines = truncatePanelLines(lines, height)
 	return strings.Join(lines, "\n")
 }
@@ -846,6 +1583,66 @@ func (m *model) actionLabel(act action) string {
 	return act.title
 }
 
+func (act action) isAddonAction() bool {
+	return strings.TrimSpace(act.addonManifest) != ""
+}
+
+func (m *model) displayPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "."
+	}
+	rel, err := filepath.Rel(m.baseDir, path)
+	if err == nil {
+		if rel == "." {
+			return "."
+		}
+		if rel != "" && !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+	}
+	return path
+}
+
+func (m *model) actionOutputIntroLines(act action) []string {
+	lines := []string{}
+	if act.isAddonAction() {
+		lines = append(lines, "Addon: "+blankFallback(act.addonName, m.actionLabel(act)))
+		lines = append(lines, "Manifest: "+m.displayPath(act.addonManifest))
+		lines = append(lines, "Working dir: "+m.displayPath(blankFallback(strings.TrimSpace(act.workDir), m.baseDir)))
+		lines = append(lines, "")
+	}
+	lines = append(lines, fmt.Sprintf("$ %s", strings.Join(act.command, " ")), "")
+	return lines
+}
+
+func addonFailureHint(err error) string {
+	if err == nil {
+		return "Check the addon command, working_dir, and any script dependencies."
+	}
+	text := err.Error()
+	switch {
+	case strings.Contains(text, "working_dir"):
+		return "Check the addon working_dir path in addon.json."
+	case strings.Contains(text, "chdir"):
+		return "The addon working_dir could not be entered. Check that the directory exists and is accessible."
+	case strings.Contains(text, "executable file not found"):
+		return "The command was not found in PATH. Use an installed binary or launch through bash."
+	case strings.Contains(text, "permission denied"):
+		return "The command or script is not executable from this environment."
+	default:
+		return "Check the addon command, working_dir, and any script dependencies."
+	}
+}
+
+func (m *model) appendAddonFailureDetails(act action, err error) {
+	m.appendOutput("Addon: " + blankFallback(act.addonName, m.actionLabel(act)))
+	m.appendOutput("Manifest: " + m.displayPath(act.addonManifest))
+	m.appendOutput("Working dir: " + m.displayPath(blankFallback(strings.TrimSpace(act.workDir), m.baseDir)))
+	m.appendOutput("Hint: " + addonFailureHint(err))
+	m.appendOutput("Hint: Review Logs/control.log for addon load warnings.")
+}
+
 func (m *model) openCategory(category string) {
 	for i, name := range m.categories {
 		if name == category {
@@ -894,14 +1691,179 @@ func (m *model) moveWorldCursor(delta int) {
 	}
 }
 
-func (m *model) mouseOverActionPanel(x int) bool {
-	panelWidth := clamp(m.width/3, 36, 52)
-	return x <= panelWidth+3
+func (m *model) moveConfigCursor(delta int) {
+	if len(m.configOptions) == 0 {
+		m.configCursor = 0
+		return
+	}
+
+	m.configCursor += delta
+	if m.configCursor < 0 {
+		m.configCursor = 0
+	}
+	if m.configCursor >= len(m.configOptions) {
+		m.configCursor = len(m.configOptions) - 1
+	}
+}
+
+func (m *model) moveModCursor(delta int) {
+	if len(m.modOptions) == 0 {
+		m.modCursor = 0
+		return
+	}
+
+	m.modCursor += delta
+	if m.modCursor < 0 {
+		m.modCursor = 0
+	}
+	if m.modCursor >= len(m.modOptions) {
+		m.modCursor = len(m.modOptions) - 1
+	}
+}
+
+func (m *model) toggleCurrentMod() {
+	if len(m.modOptions) == 0 {
+		return
+	}
+	m.modOptions[m.modCursor].Enabled = !m.modOptions[m.modCursor].Enabled
+}
+
+func (m *model) setAllModsEnabled(enabled bool) {
+	for i := range m.modOptions {
+		m.modOptions[i].Enabled = enabled
+	}
+}
+
+func (m *model) mouseOverActionPanel(x, y int) bool {
+	panelX, panelY, panelWidth, panelHeight, _, _, _, _ := m.actionPanelGeometry()
+	return x >= panelX && x < panelX+panelWidth && y >= panelY && y < panelY+panelHeight
 }
 
 func (m *model) mouseOverOutputPanel(x, y int) bool {
 	panelX, panelY, panelWidth, panelHeight, _, _, _, _ := m.outputPanelGeometry()
 	return x >= panelX && x < panelX+panelWidth && y >= panelY && y < panelY+panelHeight
+}
+
+func (m *model) actionPanelListIndexAt(y int) (int, bool) {
+	_, _, _, _, _, contentY, _, contentHeight := m.actionPanelGeometry()
+	relativeY := y - contentY
+	if relativeY < 0 || relativeY >= contentHeight {
+		return 0, false
+	}
+
+	hotkeyFootprint := panelBlockFootprint(m.renderHotkeyLegend(m.actionPanelTextWidth()))
+	clickableRow := 3
+	if m.currentCategory() == overviewCategory {
+		entries := m.categoryEntries()
+		if len(entries) == 0 {
+			return 0, false
+		}
+		start, end := visibleWindow(len(entries), max(1, contentHeight-5-hotkeyFootprint), m.cursor)
+		if start > 0 {
+			if relativeY == clickableRow {
+				return 0, false
+			}
+			clickableRow++
+		}
+		for i := start; i < end; i++ {
+			if relativeY == clickableRow {
+				return i, true
+			}
+			clickableRow++
+		}
+		return 0, false
+	}
+
+	actions := m.filteredActions()
+	if len(actions) == 0 {
+		return 0, false
+	}
+	start, end := visibleWindow(len(actions), max(1, contentHeight-5-hotkeyFootprint), m.cursor)
+	if start > 0 {
+		if relativeY == clickableRow {
+			return 0, false
+		}
+		clickableRow++
+	}
+	for i := start; i < end; i++ {
+		if relativeY == clickableRow {
+			return i, true
+		}
+		clickableRow++
+	}
+	return 0, false
+}
+
+func (m *model) worldPickerIndexAt(y int) (int, bool) {
+	_, _, _, _, _, contentY, _, contentHeight := m.outputPanelGeometry()
+	relativeY := y - contentY
+	if relativeY < 0 || relativeY >= contentHeight || len(m.worldOptions) == 0 {
+		return 0, false
+	}
+
+	start, end := visibleWindow(len(m.worldOptions), max(1, contentHeight-6), m.worldCursor)
+	row := 2
+	if start > 0 {
+		if relativeY == row {
+			return 0, false
+		}
+		row++
+	}
+	for i := start; i < end; i++ {
+		if relativeY == row || relativeY == row+1 {
+			return i, true
+		}
+		row += 2
+	}
+	return 0, false
+}
+
+func (m *model) configPickerIndexAt(y int) (int, bool) {
+	_, _, _, _, _, contentY, _, contentHeight := m.outputPanelGeometry()
+	relativeY := y - contentY
+	if relativeY < 0 || relativeY >= contentHeight || len(m.configOptions) == 0 {
+		return 0, false
+	}
+
+	start, end := visibleWindow(len(m.configOptions), max(1, contentHeight-6), m.configCursor)
+	row := 2
+	if start > 0 {
+		if relativeY == row {
+			return 0, false
+		}
+		row++
+	}
+	for i := start; i < end; i++ {
+		if relativeY == row || relativeY == row+1 {
+			return i, true
+		}
+		row += 2
+	}
+	return 0, false
+}
+
+func (m *model) modPickerIndexAt(y int) (int, bool) {
+	_, _, _, _, _, contentY, _, contentHeight := m.outputPanelGeometry()
+	relativeY := y - contentY
+	if relativeY < 0 || relativeY >= contentHeight || len(m.modOptions) == 0 {
+		return 0, false
+	}
+
+	start, end := visibleWindow(len(m.modOptions), max(1, contentHeight-6), m.modCursor)
+	row := 2
+	if start > 0 {
+		if relativeY == row {
+			return 0, false
+		}
+		row++
+	}
+	for i := start; i < end; i++ {
+		if relativeY == row {
+			return i, true
+		}
+		row++
+	}
+	return 0, false
 }
 
 func (m *model) categoryActionCount(category string) int {
@@ -929,7 +1891,7 @@ func (m *model) categorySummary(category string) string {
 	case "Server":
 		return "Lifecycle controls, quick status, and active-world selection."
 	case "Workshop":
-		return "SteamCMD readiness, downloads, sync, archive, and installed-mod views."
+		return "SteamCMD readiness, downloads, URL entry, installed-mod load control, sync, archive, and mod-config editing."
 	case "Backup":
 		return "World, config, and full snapshots plus retention cleanup."
 	case "Monitor":
@@ -966,6 +1928,25 @@ func (m *model) categoryActionPreview(category string, limit int) []string {
 
 func (m *model) currentLogSource() logSource {
 	return m.logSources[m.logSourceIndex]
+}
+
+func (m *model) modPickerSummary(width int) string {
+	enabledCount := 0
+	changedCount := 0
+	for _, mod := range m.modOptions {
+		if mod.Enabled {
+			enabledCount++
+		}
+		if mod.Enabled != mod.OriginalEnabled {
+			changedCount++
+		}
+	}
+
+	summary := fmt.Sprintf("%d of %d mods enabled", enabledCount, len(m.modOptions))
+	if changedCount > 0 {
+		summary += fmt.Sprintf("  |  %d unsaved change(s)", changedCount)
+	}
+	return fitLine(summary, width)
 }
 
 func (m *model) currentOutputXOffset() int {
@@ -1005,7 +1986,7 @@ func (m *model) currentOutputRawLines() []string {
 
 func (m *model) headerHeight() int {
 	height := 1
-	if m.running {
+	if len(m.headerStatusBits()) > 0 {
 		height++
 	}
 	if m.statusError != "" {
@@ -1015,7 +1996,7 @@ func (m *model) headerHeight() int {
 }
 
 func (m *model) rightColumnLayout() (leftTotalWidth, rightTotalWidth, statusTotalHeight, outputTotalHeight int) {
-	leftTotalWidth = clamp(m.width/3, 36, 52)
+	leftTotalWidth = actionPanelTotalWidth
 	rightTotalWidth = m.width - leftTotalWidth
 	if rightTotalWidth < 44 {
 		rightTotalWidth = 44
@@ -1046,6 +2027,25 @@ func (m *model) outputContentWidth() int {
 	_, rightTotalWidth, _, _ := m.rightColumnLayout()
 	rightWidth := availablePanelContentWidth(rightTotalWidth)
 	return panelInnerTextWidth(rightWidth)
+}
+
+func (m *model) actionPanelTextWidth() int {
+	leftTotalWidth, _, _, _ := m.rightColumnLayout()
+	panelWidth := availablePanelContentWidth(leftTotalWidth)
+	return panelInnerTextWidth(panelWidth)
+}
+
+func (m *model) actionPanelGeometry() (panelX, panelY, panelWidth, panelHeight, contentX, contentY, contentWidth, contentHeight int) {
+	leftTotalWidth, _, _, _ := m.rightColumnLayout()
+	panelX = 0
+	panelY = m.headerHeight()
+	panelWidth = leftTotalWidth
+	panelHeight = m.bodyHeight()
+	contentX = panelX + 2
+	contentY = panelY + 1
+	contentWidth = m.actionPanelTextWidth()
+	contentHeight = max(1, availablePanelContentHeight(panelHeight))
+	return
 }
 
 func (m *model) outputPanelGeometry() (panelX, panelY, panelWidth, panelHeight, contentX, contentY, contentWidth, contentHeight int) {
@@ -1080,37 +2080,33 @@ func (m *model) buildOutputView(width, height int) outputView {
 	view := outputView{
 		title:    "Log Tail",
 		lines:    m.logLines,
-		subtitle: fmt.Sprintf("%s  |  Shift+Arrows", m.currentLogSource().label),
+		subtitle: m.currentLogSource().label,
 	}
 	if m.outputMode == outputModeCommand {
 		view.title = "Command Output"
 		view.lines = m.outputLines
-		view.subtitle = fmt.Sprintf("Tab  |  %s", m.currentLogSource().label)
+		view.subtitle = fmt.Sprintf("Current log source: %s", m.currentLogSource().label)
 	}
 	if m.outputMode == outputModeLogs && len(view.lines) == 0 {
 		m.setCurrentOutputXOffset(0)
 		view.emptyState = "Waiting for " + m.currentLogSource().label
+		view.indicator = renderOutputIndicator(0, 0, width)
 		return view
 	}
 	if m.outputMode == outputModeCommand && len(view.lines) == 0 {
 		m.setCurrentOutputXOffset(0)
 		view.emptyState = "Command output will appear here."
+		view.indicator = renderOutputIndicator(0, 0, width)
 		return view
 	}
 	if len(view.lines) == 0 {
 		view.lines = []string{"No output yet."}
 	}
 
-	textRows := 2
+	textRows := 3
 	visibleSlots := max(1, height-textRows)
 	visible := tailLines(view.lines, visibleSlots)
 	view.maxOffset = maxOutputOffset(visible, width)
-	view.showOverflow = view.maxOffset > 0
-	if view.showOverflow {
-		visibleSlots = max(1, height-textRows-1)
-		visible = tailLines(view.lines, visibleSlots)
-		view.maxOffset = maxOutputOffset(visible, width)
-	}
 
 	view.offset = m.currentOutputXOffset()
 	if view.offset > view.maxOffset {
@@ -1119,6 +2115,7 @@ func (m *model) buildOutputView(width, height int) outputView {
 	}
 
 	view.lines = sliceLinesHorizontallyWithIndicators(visible, view.offset, width)
+	view.indicator = renderOutputIndicator(view.offset, view.maxOffset, width)
 	return view
 }
 
@@ -1165,6 +2162,12 @@ func (m *model) renderSelectionRows(width, height int) []string {
 	for _, line := range wrapLine(act.description, width) {
 		rows = append(rows, sectionMutedStyle.Render(line))
 	}
+	if act.isAddonAction() {
+		rows = append(rows, "")
+		rows = append(rows, sectionMutedStyle.Render(fitLine("Addon: "+blankFallback(act.addonName, m.actionLabel(act)), width)))
+		rows = append(rows, sectionMutedStyle.Render(fitLine("Manifest: "+m.displayPath(act.addonManifest), width)))
+		rows = append(rows, sectionMutedStyle.Render(fitLine("Working dir: "+m.displayPath(blankFallback(strings.TrimSpace(act.workDir), m.baseDir)), width)))
+	}
 	return rows
 }
 
@@ -1173,20 +2176,14 @@ func (m *model) renderSnapshotRows(width int) []string {
 		return nil
 	}
 
-	state := "OFFLINE"
-	if m.status.Online {
-		state = "ONLINE"
-	}
-
 	rows := []string{
 		sectionTitleStyle.Render("Server Snapshot"),
-		renderSnapshotDataRow(0, width, formatSnapshotPair(width, "State", state, "PID", blankFallback(m.status.PID, "not running"))),
-		renderSnapshotDataRow(1, width, formatSnapshotPair(width, "World", blankFallback(m.status.World, "none"), "Players", blankFallback(m.status.Players, "0"))),
-		renderSnapshotDataRow(2, width, formatSnapshotPair(width, "Mods", fmt.Sprintf("%d", m.status.ModCount), "Backups", fmt.Sprintf("%d", m.status.WorldBackups))),
+		renderSnapshotDataRow(0, width, formatSnapshotPair(width, "PID", blankFallback(m.status.PID, "not running"), "World", blankFallback(m.status.World, "none"))),
+		renderSnapshotDataRow(1, width, formatSnapshotPair(width, "Players", blankFallback(m.status.Players, "n/a"), "Mods", fmt.Sprintf("%d", m.status.ModCount))),
+		renderSnapshotDataRow(2, width, formatSnapshotPair(width, "Backups", fmt.Sprintf("%d", m.status.WorldBackups), "Disk", blankFallback(m.status.DiskBusy, "n/a"))),
 		panelDivider(width),
-		renderSnapshotDataRow(3, width, formatSnapshotPair(width, blankFallback(m.status.TempLabel, "Temp"), blankFallback(m.status.TempValue, "n/a"), "CPU", blankFallback(m.status.CPU, "0%"))),
-		renderSnapshotDataRow(4, width, formatSnapshotPair(width, "Mem", blankFallback(m.status.Memory, "0%"), "Uptime", blankFallback(m.status.Uptime, "0m"))),
-		renderSnapshotDataRow(5, width, formatSnapshotPair(width, "Disk", blankFallback(m.status.DiskBusy, "n/a"), "", "")),
+		renderSnapshotDataRow(3, width, formatSnapshotPair(width, blankFallback(m.status.TempLabel, "Temp"), blankFallback(m.status.TempValue, "n/a"), "CPU", blankFallback(m.status.CPU, "n/a"))),
+		renderSnapshotDataRow(4, width, formatSnapshotPair(width, "Mem", blankFallback(m.status.Memory, "n/a"), "Uptime", blankFallback(m.status.Uptime, "n/a"))),
 	}
 	return rows
 }
@@ -1270,6 +2267,40 @@ func normalizePanelBlock(lines []string, height int) []string {
 	return block
 }
 
+func (m *model) appendBottomPanelBlock(lines, block []string, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	if len(block) == 0 {
+		return truncatePanelLines(lines, height)
+	}
+
+	required := len(block)
+	if len(lines) > 0 {
+		required++
+	}
+	if len(lines)+required > height {
+		return truncatePanelLines(lines, height)
+	}
+
+	rows := append([]string{}, lines...)
+	for len(rows)+required < height {
+		rows = append(rows, "")
+	}
+	if len(rows) > 0 {
+		rows = append(rows, "")
+	}
+	rows = append(rows, block...)
+	return truncatePanelLines(rows, height)
+}
+
+func panelBlockFootprint(block []string) int {
+	if len(block) == 0 {
+		return 0
+	}
+	return len(block) + 1
+}
+
 func panelDivider(width int) string {
 	if width <= 0 {
 		return ""
@@ -1291,17 +2322,23 @@ func formatSnapshotPair(width int, leftLabel, leftValue, rightLabel, rightValue 
 	}
 
 	usableWidth := width - separatorWidth
-	leftWidth := usableWidth * 44 / 100
+	leftWidth := 21
+	rightWidth := usableWidth - leftWidth
+	if rightWidth > 22 {
+		rightWidth = 22
+	}
+	if rightWidth < 14 {
+		rightWidth = 14
+		leftWidth = usableWidth - rightWidth
+	}
 	if leftWidth < 14 {
 		leftWidth = 14
+		rightWidth = usableWidth - leftWidth
 	}
-	if leftWidth > usableWidth-14 {
-		leftWidth = usableWidth - 14
-	}
-	rightWidth := usableWidth - leftWidth
 	left = formatSnapshotField(leftLabel, leftValue, leftWidth)
 	right = formatSnapshotField(rightLabel, rightValue, rightWidth)
-	return fitAndPadLine(left, leftWidth) + separator + fitLine(right, rightWidth)
+	block := fitAndPadLine(left, leftWidth) + separator + fitAndPadLine(right, rightWidth)
+	return fitAndPadLine(block, width)
 }
 
 func fitAndPadLine(line string, width int) string {
@@ -1391,16 +2428,22 @@ func sliceLineHorizontallyWithIndicators(line string, offset, width int) string 
 }
 
 func renderOutputIndicator(offset, maxOffset, width int) string {
-	if maxOffset <= 0 {
+	if width <= 0 {
 		return ""
 	}
 	start := offset + 1
 	end := offset + width
 	total := width + maxOffset
+	if total < width {
+		total = width
+	}
 	if end > total {
 		end = total
 	}
-	return fmt.Sprintf("Horizontal scroll %d-%d of %d  |  Shift+Arrows", start, end, total)
+	if start < 1 {
+		start = 1
+	}
+	return fmt.Sprintf("Viewing columns %d-%d of %d  |  Shift+Arrows", start, end, total)
 }
 
 func truncatePanelLines(lines []string, height int) []string {
@@ -1554,12 +2597,34 @@ var (
 				Foreground(lipgloss.Color("#93C5FD")).
 				Background(lipgloss.Color("#0B1E33"))
 
+	inputFieldStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#E2E8F0")).
+			Background(lipgloss.Color("#0B1E33"))
+
 	sectionTitleStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("#7DD3FC"))
 
 	sectionMutedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#94A3B8"))
+
+	hotkeyTitleStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#64748B")).
+				Faint(true)
+
+	hotkeyActiveKeyStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#A7B4C5"))
+
+	hotkeyActiveDescStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#7C8DA1"))
+
+	hotkeyInactiveKeyStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#64748B")).
+				Faint(true)
+
+	hotkeyInactiveDescStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#475569")).
+				Faint(true)
 
 	actionStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#E2E8F0"))
@@ -1605,10 +2670,13 @@ func defaultActions() []action {
 		{category: "Workshop", title: "Workshop / Download Mods", description: "Download queued workshop mods.", command: []string{"bash", "Scripts/steam/tmod-workshop.sh", "download"}},
 		{category: "Workshop", title: "Workshop / Sync Mods", description: "Copy workshop mods into Mods/ without prompts.", command: []string{"bash", "Scripts/steam/tmod-workshop.sh", "sync", "--yes"}},
 		{category: "Workshop", title: "Workshop / List Downloads", description: "Show the downloaded workshop mod table.", command: []string{"bash", "Scripts/steam/tmod-workshop.sh", "list"}},
+		{category: "Workshop", title: "Workshop / Add Mod by URL or ID", description: "Paste a Steam Workshop URL or numeric ID and add it to mod_ids.txt.", kind: actionAddWorkshopMod},
+		{category: "Workshop", title: "Workshop / Manage Installed Mods", description: "Toggle which installed mods load at server start, then save enabled.json.", kind: actionManageInstalledMods},
 		{category: "Workshop", title: "Workshop / Archive Old Versions", description: "Archive old incompatible workshop builds.", command: []string{"bash", "Scripts/steam/tmod-workshop.sh", "archive", "--yes"}, confirmText: "Archive old workshop versions now?"},
 		{category: "Workshop", title: "Workshop / Cleanup Downloads", description: "Clean incomplete workshop downloads.", command: []string{"bash", "Scripts/steam/tmod-workshop.sh", "cleanup"}},
 		{category: "Workshop", title: "Workshop / Show Queued Mod IDs", description: "Display mod_ids.txt with resolved names.", command: []string{"bash", "Scripts/steam/tmod-workshop.sh", "mods", "ids"}},
 		{category: "Workshop", title: "Workshop / List Installed Mods", description: "Show enabled and disabled installed mods.", command: []string{"bash", "Scripts/steam/tmod-workshop.sh", "mods", "list"}},
+		{category: "Workshop", title: "Workshop / Edit Mod Configs", description: "Pick a mod config file and open it in your terminal editor.", kind: actionEditModConfig},
 
 		{category: "Backup", title: "Backup / Status", description: "Inspect backup counts and retention state.", command: []string{"bash", "Scripts/backup/tmod-backup.sh", "status"}},
 		{category: "Backup", title: "Backup / World Backup", description: "Create a world backup archive.", command: []string{"bash", "Scripts/backup/tmod-backup.sh", "worlds"}},
@@ -1639,8 +2707,44 @@ func defaultActions() []action {
 
 		{category: "Maintenance", title: "Maintenance / Run All Tasks", description: "Run backup cleanup, log rotation, sync, and mod checks.", command: []string{"bash", "Scripts/hub/tmod-control.sh", "maintenance"}, confirmText: "Run the full maintenance sequence now?"},
 		{category: "Maintenance", title: "Maintenance / Health Snapshot", description: "Run the lightweight admin health summary.", command: []string{"bash", "Scripts/hub/tmod-control.sh", "health"}},
-		{category: "Maintenance", title: "Maintenance / Scripts Status", description: "Check the backend script surface from the legacy admin command.", command: []string{"bash", "Scripts/hub/tmod-control.sh", "scripts"}},
+		{category: "Maintenance", title: "Maintenance / Scripts Status", description: "Check the backend script surface from the shell hub.", command: []string{"bash", "Scripts/hub/tmod-control.sh", "scripts"}},
 	}
+}
+
+func categoriesForActions(actions []action) []string {
+	categories := []string{overviewCategory}
+	seen := map[string]bool{
+		overviewCategory: true,
+	}
+
+	builtInOrder := []string{"Server", "Workshop", "Backup", "Monitor", "Diagnostics", "Maintenance"}
+	for _, category := range builtInOrder {
+		if !actionCategoryPresent(actions, category) {
+			continue
+		}
+		categories = append(categories, category)
+		seen[category] = true
+	}
+
+	for _, act := range actions {
+		category := strings.TrimSpace(act.category)
+		if category == "" || seen[category] {
+			continue
+		}
+		categories = append(categories, category)
+		seen[category] = true
+	}
+
+	return categories
+}
+
+func actionCategoryPresent(actions []action, category string) bool {
+	for _, act := range actions {
+		if act.category == category {
+			return true
+		}
+	}
+	return false
 }
 
 func boolBadge(ok bool) string {

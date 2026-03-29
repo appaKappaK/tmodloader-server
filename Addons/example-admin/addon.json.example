@@ -1,0 +1,17 @@
+{
+  "name": "example-admin",
+  "section": "Admin",
+  "actions": [
+    {
+      "title": "Audit World",
+      "description": "Run an addon-local audit helper.",
+      "command": ["bash", "scripts/audit-world.sh"]
+    },
+    {
+      "title": "Run Repo Script",
+      "description": "Call back into a repo-root script from an addon.",
+      "command": ["bash", "${repo_dir}/Scripts/hub/tmod-control.sh", "health"],
+      "working_dir": "${repo_dir}"
+    }
+  ]
+}

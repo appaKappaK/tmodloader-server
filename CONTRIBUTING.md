@@ -14,9 +14,11 @@ This repo is the portable/public edition of the toolkit. Changes should favor:
 ## Before You Open A PR
 
 1. Run shell syntax checks for any scripts you touched.
-2. Update `README.md` when behavior, setup, or file layout changes.
-3. Keep new tracked files generic and reusable.
-4. Do not commit local runtime data such as worlds, logs, backups, or SteamCMD contents.
+2. Run `go test ./...` if you touched the Go control room.
+3. Update `CHANGELOG.md` for user-facing changes.
+4. Update `README.md` when setup, behavior, or file layout changes.
+5. Keep new tracked files generic and reusable.
+6. Do not commit local runtime data such as worlds, logs, backups, or SteamCMD contents.
 
 ## Style Notes
 
@@ -30,9 +32,11 @@ This repo is the portable/public edition of the toolkit. Changes should favor:
 Useful checks:
 
 ```bash
+go test ./...                                   # run the Go control room tests when Go code changed
 bash -n Scripts/core/tmod-core.sh
 bash -n Scripts/hub/tmod-control.sh
 bash -n Scripts/steam/tmod-workshop.sh
+bash -n Scripts/diag/tmod-diagnostics.sh
 bash Scripts/hub/tmod-control.sh status
 ```
 
@@ -42,5 +46,6 @@ If your change affects other scripts, run the relevant `bash -n` checks too.
 
 - Keep PRs focused.
 - Explain the user-facing impact.
+- Add or update the `Unreleased` entry in `CHANGELOG.md` when behavior changes for users.
 - Mention any setup or migration changes.
 - Include follow-up work separately instead of bundling unrelated cleanup.

@@ -9,13 +9,17 @@ if [[ -f "$CORE_SCRIPT" ]]; then
      
     # shellcheck disable=SC1090
     source "$CORE_SCRIPT" || {
-        echo "❌ Failed to load core functions from $CORE_SCRIPT"
+        echo "Error: Failed to load core functions from $CORE_SCRIPT"
         exit 1
     }
 else
-    echo "❌ Cannot find core functions at: $CORE_SCRIPT"
+    echo "Error: Cannot find core functions at: $CORE_SCRIPT"
     exit 1
 fi
+
+print_divider() {
+    printf '%s\n' '------------------------------------------------------------'
+}
 
 # Workshop configuration
 STEAMCMD_PATH="$(get_steamcmd_path)"
@@ -109,23 +113,23 @@ validate_workshop_config() {
     
     # Check SteamCMD
     if [[ ! -f "$STEAMCMD_PATH" ]]; then
-        echo "❌ SteamCMD not found at: $STEAMCMD_PATH"
-        echo "💡 Install SteamCMD or set STEAMCMD_PATH environment variable"
+        echo "Error: SteamCMD not found at: $STEAMCMD_PATH"
+        echo "Tip: Install SteamCMD or set the STEAMCMD_PATH environment variable"
         ((errors++))
     fi
     
     # Steam username is optional for Workshop downloads. Anonymous works, but
     # a real account may be more resilient for larger download batches.
     if [[ -z "$STEAM_USERNAME" ]]; then
-        echo "ℹ️ Steam username not set"
-        echo "💡 Workshop downloads will use anonymous login"
-        echo "💡 Set STEAM_USERNAME in your shell or Scripts/env.sh if you want logged-in downloads"
+        echo "Info: Steam username not set"
+        echo "Tip: Workshop downloads will use anonymous login"
+        echo "Tip: Set STEAM_USERNAME in your shell or Scripts/env.sh if you want logged-in downloads"
     fi
     
     # Check mod IDs file
     if [[ ! -f "$MOD_IDS_FILE" ]]; then
-        echo "⚠️ Mod IDs file not found: $MOD_IDS_FILE"
-        echo "💡 Creating example mod_ids.txt file..."
+        echo "Warning: Mod IDs file not found: $MOD_IDS_FILE"
+        echo "Tip: Creating example mod_ids.txt file..."
         create_example_mod_ids_file
     fi
     
@@ -137,7 +141,7 @@ create_example_mod_ids_file() {
     local example_file="$BASE_DIR/Scripts/steam/mod_ids.example.txt"
     if [[ -f "$example_file" ]]; then
         cp "$example_file" "$MOD_IDS_FILE"
-        echo "📄 Created mod_ids.txt from mod_ids.example.txt"
+        echo "Created mod_ids.txt from mod_ids.example.txt"
     else
         cat > "$MOD_IDS_FILE" << 'EOF'
 # tModLoader Workshop Mod IDs
@@ -152,9 +156,9 @@ create_example_mod_ids_file() {
 # Add your mod IDs below:
 
 EOF
-    echo "📄 Created example mod_ids.txt file"
+    echo "Created example mod_ids.txt file"
     fi
-    echo "💡 Edit $MOD_IDS_FILE to add your desired mod IDs"
+    echo "Tip: Edit $MOD_IDS_FILE to add your desired mod IDs"
 }
 
 count_configured_mod_ids() {
@@ -171,7 +175,7 @@ download_mods() {
 
     # Validate configuration
     if ! validate_workshop_config; then
-        echo "❌ Configuration validation failed"
+        echo "Error: Configuration validation failed"
         return 1
     fi
 
@@ -716,30 +720,31 @@ cleanup_workshop() {
 
 # Show workshop status and configuration
 show_status() {
-    echo "📊 Steam Workshop Manager Status"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
+    echo "Steam Workshop Manager Status"
+    print_divider
     
     # Configuration status
-    echo "⚙️ Configuration:"
+    echo "Configuration:"
     
     if [[ -f "$STEAMCMD_PATH" ]]; then
-        echo "   ✅ SteamCMD: Found at $STEAMCMD_PATH"
+        echo "   OK: SteamCMD found at $STEAMCMD_PATH"
     else
-        echo "   ❌ SteamCMD: Not found at $STEAMCMD_PATH"
+        echo "   Error: SteamCMD not found at $STEAMCMD_PATH"
     fi
     
     if [[ -n "$STEAM_USERNAME" ]]; then
-        echo "   ✅ Steam Login: logged-in ($STEAM_USERNAME)"
+        echo "   OK: Steam login - logged in ($STEAM_USERNAME)"
     else
-        echo "   ℹ️ Steam Login: anonymous fallback"
+        echo "   Info: Steam login - anonymous fallback"
     fi
     
     if [[ -f "$MOD_IDS_FILE" ]]; then
         local mod_count
         mod_count=$(count_configured_mod_ids)
-        echo "   ✅ Mod IDs File: $mod_count mod IDs configured"
+        echo "   OK: Mod IDs file - $mod_count mod IDs configured"
     else
-        echo "   ❌ Mod IDs File: Not found"
+        echo "   Error: Mod IDs file not found"
     fi
     
     echo
@@ -754,13 +759,13 @@ show_status() {
         local total_size
         total_size=$(du -sh "$WORKSHOP_DOWNLOAD_DIR" 2>/dev/null | cut -f1)
         
-        echo "📥 Downloads:"
-        echo "   📁 Directory: $WORKSHOP_DOWNLOAD_DIR"
-        echo "   📋 Total files: $downloaded_count .tmod files"
-        echo "   🎮 Unique mods: $unique_mods different mods"
-        echo "   💾 Total size: $total_size"
+        echo "Downloads:"
+        echo "   Directory: $WORKSHOP_DOWNLOAD_DIR"
+        echo "   Total files: $downloaded_count .tmod files"
+        echo "   Unique mods: $unique_mods different mods"
+        echo "   Total size: $total_size"
     else
-        echo "📥 Downloads: Directory not found"
+        echo "Downloads: directory not found"
     fi
     
     echo
@@ -768,24 +773,24 @@ show_status() {
     # Server mods status
     local server_mod_count
     server_mod_count=$(get_mod_list | wc -l)
-    echo "🎮 Server Mods: $server_mod_count mods in server directory"
+    echo "Server Mods: $server_mod_count mods in server directory"
     
     # Archive status
     if [[ -d "$ARCHIVE_DIR" ]]; then
         local archived_count
         # Fixed: Use -print0 with process substitution
         archived_count=$(find "$ARCHIVE_DIR" -name "*.tmod" -print0 2>/dev/null | xargs -0 -n1 | wc -l)
-        echo "📦 Archive: $archived_count archived mod versions"
+        echo "Archive: $archived_count archived mod versions"
     else
-        echo "📦 Archive: Not initialized"
+        echo "Archive: not initialized"
     fi
     
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    print_divider
 }
 
 # Initialize workshop system
 init_workshop() {
-    echo "🔧 Initializing Steam Workshop system..."
+    echo "Initializing Steam Workshop system..."
     
     mkdir -p "$ARCHIVE_DIR"
     
@@ -795,17 +800,17 @@ init_workshop() {
     fi
     
     # Validate configuration
-    echo "🔍 Validating configuration..."
+    echo "Validating configuration..."
     if validate_workshop_config; then
-        echo "✅ Workshop system initialized successfully"
-        echo "💡 Edit $MOD_IDS_FILE to add your desired mod IDs"
+        echo "OK: Workshop system initialized successfully"
+        echo "Tip: Edit $MOD_IDS_FILE to add your desired mod IDs"
         if [[ -z "$STEAM_USERNAME" ]]; then
-            echo "💡 Downloads will use anonymous login until STEAM_USERNAME is configured"
+            echo "Tip: Downloads will use anonymous login until STEAM_USERNAME is configured"
         fi
-        echo "💡 Then run './tmod-workshop.sh download' to download mods"
+        echo "Tip: Then run './tmod-workshop.sh download' to download mods"
         return 0
     else
-        echo "❌ Workshop system initialization failed"
+        echo "Error: Workshop system initialization failed"
         return 1
     fi
 }
@@ -891,15 +896,15 @@ mods_list() {
     mapfile -t installed < <(_installed_mods)
 
     if [[ ${#installed[@]} -eq 0 ]]; then
-        echo "📭 No mods installed in $MODS_DIR"
+        echo "No mods installed in $MODS_DIR"
         echo "   Run './tmod-workshop.sh sync' to copy mods from the workshop."
         return 0
     fi
 
     _load_enabled
 
-    echo "📦 Installed Mods  (${#installed[@]} total)"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "Installed Mods  (${#installed[@]} total)"
+    print_divider
     printf "  %-3s  %-40s  %s\n" "#" "Mod Name" "Status"
     printf "  %-3s  %-40s  %s\n" "---" "----------------------------------------" "--------"
 
@@ -908,16 +913,16 @@ mods_list() {
         local mod="${installed[$i]}"
         local num=$(( i + 1 ))
         if [[ -v "ENABLED_MODS[${mod,,}]" ]]; then
-            printf "  %-3s  %-40s  🟢 enabled\n"  "$num" "$mod"
+            printf "  %-3s  %-40s  enabled\n"  "$num" "$mod"
             (( enabled_count++ ))
         else
-            printf "  %-3s  %-40s  ⚫ disabled\n" "$num" "$mod"
+            printf "  %-3s  %-40s  disabled\n" "$num" "$mod"
             (( disabled_count++ ))
         fi
     done
 
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "  🟢 $enabled_count enabled   ⚫ $disabled_count disabled"
+    print_divider
+    echo "  $enabled_count enabled   $disabled_count disabled"
 }
 
 # ── mods enable <name|all> ────────────────────────────────────────────────
@@ -930,12 +935,12 @@ mods_enable() {
         while IFS= read -r mod; do
             if [[ ! -v "ENABLED_MODS[${mod,,}]" ]]; then
                 ENABLED_MODS["${mod,,}"]="$mod"
-                echo "  🟢 Enabled: $mod"
+                echo "  OK: Enabled: $mod"
                 (( count++ ))
             fi
         done < <(_installed_mods)
         _save_enabled
-        echo "✅ Enabled $count mod(s)"
+        echo "OK: Enabled $count mod(s)"
         return 0
     fi
 
@@ -971,13 +976,13 @@ mods_enable() {
         fi
 
         if [[ -z "$matched" ]]; then
-            echo "  ❌ Not found: $name"
+            echo "  Error: Not found: $name"
             (( errors++ ))
         elif [[ -v "ENABLED_MODS[${matched,,}]" ]]; then
-            echo "  ℹ️  Already enabled: $matched"
+            echo "  Info: Already enabled: $matched"
         else
             ENABLED_MODS["${matched,,}"]="$matched"
-            echo "  🟢 Enabled: $matched"
+            echo "  OK: Enabled: $matched"
             (( changed++ ))
         fi
     done
@@ -995,7 +1000,7 @@ mods_disable() {
         local count=${#ENABLED_MODS[@]}
         ENABLED_MODS=()
         _save_enabled
-        echo "✅ Disabled all $count mod(s)"
+        echo "OK: Disabled all $count mod(s)"
         return 0
     fi
 
@@ -1032,18 +1037,18 @@ mods_disable() {
         fi
 
         if [[ -z "$matched" ]]; then
-            echo "  ❌ Not found: $name"
+            echo "  Error: Not found: $name"
             (( errors++ ))
             continue
         fi
 
         local key="${matched,,}"
         if [[ ! -v "ENABLED_MODS[$key]" ]]; then
-            echo "  ℹ️  Not enabled: $matched"
+            echo "  Info: Not enabled: $matched"
         else
             local actual="${ENABLED_MODS[$key]}"
             unset "ENABLED_MODS[$key]"
-            echo "  ⚫ Disabled: $actual"
+            echo "  OK: Disabled: $actual"
             (( changed++ ))
         fi
     done
@@ -1061,7 +1066,7 @@ mods_pick() {
     mapfile -t installed < <(_installed_mods)
 
     if [[ ${#installed[@]} -eq 0 ]]; then
-        echo "📭 No mods installed. Run './tmod-workshop.sh sync' first."
+        echo "No mods installed. Run './tmod-workshop.sh sync' first."
         return 0
     fi
 
@@ -1074,9 +1079,9 @@ mods_pick() {
 
     while true; do
         clear
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        echo " 🎮  Mod Load Manager  —  toggle which mods load at server start"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        print_divider
+        echo "Mod Load Manager - toggle which mods load at server start"
+        print_divider
         printf "  %-5s  %-42s  %s\n" "NUM" "Mod Name" "Load?"
         printf "  %-5s  %-42s  %s\n" "-----" "------------------------------------------" "------"
 
@@ -1085,14 +1090,14 @@ mods_pick() {
             local mod="${installed[$i]}"
             local num=$(( i + 1 ))
             if [[ -v "local_enabled[${mod,,}]" ]]; then
-                printf "  [%-3s]  %-42s  🟢 YES\n" "$num" "$mod"
+                printf "  [%-3s]  %-42s  YES\n" "$num" "$mod"
                 (( enabled_now++ ))
             else
-                printf "  [%-3s]  %-42s  ⚫ no\n"  "$num" "$mod"
+                printf "  [%-3s]  %-42s  no\n"  "$num" "$mod"
             fi
         done
 
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        print_divider
         echo "  $enabled_now / ${#installed[@]} mods enabled"
         echo
         echo "  Type a number to toggle  |  a = enable all  |  n = disable all"
@@ -1113,7 +1118,7 @@ mods_pick() {
                             local_enabled["${mod,,}"]="$mod"
                         fi
                     else
-                        echo "  ⚠️  Number out of range. Press Enter to continue."
+                        echo "  Warning: Number out of range. Press Enter to continue."
                         read -r
                     fi
                 fi
@@ -1134,16 +1139,16 @@ mods_pick() {
                 done
                 _save_enabled
                 echo
-                echo "  ✅ Saved — $enabled_now mod(s) will load on next server start."
+                echo "  OK: Saved - $enabled_now mod(s) will load on next server start."
                 
                 # Fixed: Use proper if statement instead of A && B || C
                 if is_server_up; then
-                    echo "  ⚠️  Server is running — restart required for changes to take effect."
+                    echo "  Warning: Server is running - restart required for changes to take effect."
                 fi
                 return 0
                 ;;
             q|Q|$'\033')
-                echo "  ↩️  Cancelled — no changes saved."
+                echo "  Cancelled - no changes saved."
                 return 0
                 ;;
         esac
@@ -1272,14 +1277,14 @@ mod_ids_add() {
     elif [[ "$input" =~ ^[0-9]+$ ]]; then
         mod_id="$input"
     else
-        echo "❌ Could not extract a Workshop ID from: $input"
+        echo "Error: Could not extract a Workshop ID from: $input"
         echo "   Expected a numeric ID or a URL containing '?id=XXXXXXXXX'"
         return 1
     fi
 
     # Sanity check — Workshop IDs are typically 7-12 digits
     if [[ ${#mod_id} -lt 7 || ${#mod_id} -gt 12 ]]; then
-        echo "❌ '$mod_id' doesn't look like a valid Workshop ID (expected 7-12 digits)"
+        echo "Error: '$mod_id' doesn't look like a valid Workshop ID (expected 7-12 digits)"
         return 1
     fi
 
@@ -1292,15 +1297,15 @@ mod_ids_add() {
 
     # Warn if placeholder/example lines are still present
     if grep -qE '^\.\.\.|^[0-9].*#\s*EXAMPLE' "$MOD_IDS_FILE" 2>/dev/null; then
-        echo "  ⚠️  mod_ids.txt has example/placeholder entries (... or # EXAMPLE lines)."
+        echo "  Warning: mod_ids.txt has example/placeholder entries (... or # EXAMPLE lines)."
         if (( WORKSHOP_ASSUME_YES )); then
             sed -i '/^\.\.\./d; /[0-9].*#[[:space:]]*EXAMPLE/d' "$MOD_IDS_FILE"
-            echo "  ✅ Placeholder entries removed."
+            echo "  OK: Placeholder entries removed."
         else
             read -p "  Clean them out before adding? (yes/no): " -r _clean
             if [[ "$_clean" == "yes" ]]; then
                 sed -i '/^\.\.\./d; /[0-9].*#[[:space:]]*EXAMPLE/d' "$MOD_IDS_FILE"
-                echo "  ✅ Placeholder entries removed."
+                echo "  OK: Placeholder entries removed."
             fi
         fi
     fi
@@ -1309,7 +1314,7 @@ mod_ids_add() {
     if grep -qE "^[[:space:]]*${mod_id}([[:space:]]|$)" "$MOD_IDS_FILE" 2>/dev/null; then
         local name
         name=$(get_workshop_mod_name "$mod_id")
-        echo "ℹ️  Already in list: $name ($mod_id)"
+        echo "Info: Already in list: $name ($mod_id)"
         return 0
     fi
 
@@ -1318,7 +1323,7 @@ mod_ids_add() {
     mod_name=$(get_workshop_mod_name "$mod_id")
 
     echo "$mod_id" >> "$MOD_IDS_FILE"
-    echo "✅ Added: $mod_name ($mod_id)"
+    echo "OK: Added: $mod_name ($mod_id)"
     log_workshop "Added mod: $mod_name ($mod_id)" "INFO"
 
     local total
@@ -1331,7 +1336,7 @@ mod_ids_add() {
 # Backs up the file first so it can be recovered if needed.
 mod_ids_clear() {
     if [[ ! -f "$MOD_IDS_FILE" ]]; then
-        echo "ℹ️  mod_ids.txt doesn't exist yet — nothing to clear."
+        echo "Info: mod_ids.txt doesn't exist yet - nothing to clear."
         return 0
     fi
 
@@ -1339,14 +1344,14 @@ mod_ids_clear() {
     total=$(count_configured_mod_ids)
 
     if [[ "$total" -eq 0 ]]; then
-        echo "ℹ️  mod_ids.txt already has no mod IDs."
+        echo "Info: mod_ids.txt already has no mod IDs."
         return 0
     fi
 
-    echo "⚠️  This will remove all $total mod ID(s) from mod_ids.txt."
+    echo "Warning: This will remove all $total mod ID(s) from mod_ids.txt."
     echo "   A backup will be saved to mod_ids.txt.bak"
     if (( WORKSHOP_ASSUME_YES )); then
-        echo "   Auto-confirm enabled — clearing mod IDs."
+        echo "   Auto-confirm enabled - clearing mod IDs."
     else
         read -p "   Type YES to confirm: " -r confirm
         if [[ "$confirm" != "YES" ]]; then
@@ -1361,7 +1366,7 @@ mod_ids_clear() {
     grep "^[[:space:]]*#\|^[[:space:]]*$" "$MOD_IDS_FILE" > "${MOD_IDS_FILE}.tmp"
     mv "${MOD_IDS_FILE}.tmp" "$MOD_IDS_FILE"
 
-    echo "✅ Cleared $total mod ID(s). Backup saved to mod_ids.txt.bak"
+    echo "OK: Cleared $total mod ID(s). Backup saved to mod_ids.txt.bak"
     log_workshop "Cleared $total mod IDs from $MOD_IDS_FILE (backup saved)" "INFO"
 }
 
@@ -1396,7 +1401,7 @@ mods_cmd() {
 # Show help
 show_help() {
     cat << 'EOF'
-🎮 tModLoader Steam Workshop Manager
+tModLoader Steam Workshop Manager
 
 Download and manage mods directly from Steam Workshop
 
@@ -1417,13 +1422,13 @@ Mod Load Management:
   mods list              Show installed mods with enabled/disabled status
   mods enable  <name>    Enable a mod (use 'all' to enable everything)
   mods disable <name>    Disable a mod (use 'all' to disable everything)
-  mods pick              Interactive toggle menu — no nano needed
-  mods add [--yes] <id>  Add a mod ID and auto-clean placeholders if confirmed
+  mods pick              Interactive toggle menu
+  mods add [--yes] <url|id>  Add a Workshop URL or ID and auto-clean placeholders if confirmed
   mods clear [--yes]     Clear mod_ids.txt without a prompt when scripted
 
 Workflow:
   1. ./tmod-workshop.sh init           # Initialize system
-  2. Edit mod_ids.txt                  # Add desired mod IDs
+  2. Edit mod_ids.txt                  # Add desired Workshop URLs or IDs
   3. ./tmod-workshop.sh download       # Download from Workshop
   4. ./tmod-workshop.sh sync           # Copy to server
   5. ./tmod-workshop.sh mods pick      # Toggle which mods load
@@ -1453,13 +1458,13 @@ Examples:
   ./tmod-workshop.sh status            # Check system configuration
 
 Features:
-  ✅ Bulk mod downloading from Steam Workshop
-  ✅ Version compatibility checking (2024.5+ and 2025.x)
-  ✅ Automatic old version archival
-  ✅ Enable/disable individual mods without editing files
-  ✅ Interactive mod picker (works over SSH, no arrow keys needed)
-  ✅ Integration with tmod-* script system
-  ✅ Comprehensive logging and error handling
+  - Bulk mod downloading from Steam Workshop
+  - Version compatibility checking (2024.5+ and 2025.x)
+  - Automatic old version archival
+  - Enable/disable individual mods without editing files
+  - Interactive mod picker (works over SSH, no arrow keys needed)
+  - Integration with tmod-* script system
+  - Comprehensive logging and error handling
 EOF
 }
 

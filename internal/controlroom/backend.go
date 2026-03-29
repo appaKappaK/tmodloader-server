@@ -1,8 +1,9 @@
-package main
+package controlroom
 
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,6 +33,34 @@ type worldOption struct {
 	Active   bool
 }
 
+type configOption struct {
+	RelPath  string
+	Path     string
+	Size     string
+	Modified string
+}
+
+type modOption struct {
+	Name            string
+	Enabled         bool
+	OriginalEnabled bool
+}
+
+type addonManifest struct {
+	Name    string                `json:"name"`
+	Section string                `json:"section"`
+	Actions []addonManifestAction `json:"actions"`
+}
+
+type addonManifestAction struct {
+	Section     string   `json:"section"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Command     []string `json:"command"`
+	ConfirmText string   `json:"confirm_text"`
+	WorkingDir  string   `json:"working_dir"`
+}
+
 type appStatus struct {
 	Online       bool
 	PID          string
@@ -51,6 +80,44 @@ var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 var numericValuePattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 var wholeNumberPattern = regexp.MustCompile(`^[0-9]+$`)
 var signedNumericValuePattern = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
+var decorativeLinePattern = regexp.MustCompile(`^[\s\p{So}\p{Sk}\p{Pd}\p{Pc}━─│┌┐└┘]+$`)
+var outputGlyphReplacer = strings.NewReplacer(
+	"\uFE0F", "",
+	"✅ ", "[ok] ",
+	"❌ ", "[error] ",
+	"⚠ ", "[warn] ",
+	"💡 ", "[tip] ",
+	"ℹ ", "[info] ",
+	"🟢 ", "",
+	"🔴 ", "",
+	"🟡 ", "",
+	"🔵 ", "",
+	"🎮 ", "",
+	"🚀 ", "",
+	"🛑 ", "",
+	"🔄 ", "",
+	"📦 ", "",
+	"📋 ", "",
+	"📁 ", "",
+	"🧹 ", "",
+	"🔍 ", "",
+	"🔧 ", "",
+	"📊 ", "",
+	"🎉 ", "",
+	"⚙ ", "",
+	"🖥 ", "",
+	"📈 ", "",
+	"🔪 ", "",
+	"📺 ", "",
+	"💾 ", "",
+	"💿 ", "",
+	"⚡ ", "",
+	"👥 ", "",
+	"📅 ", "",
+	"📝 ", "",
+	"⏱ ", "Duration: ",
+	"·", "|",
+)
 
 type diskBusySample struct {
 	ioMillis int64
@@ -73,29 +140,72 @@ func defaultLogSources(baseDir string) []logSource {
 
 func (m *model) startAction(act action) {
 	label := m.actionLabel(act)
+	if err := validateRunnableAction(act); err != nil {
+		m.running = false
+		m.activeAction = ""
+		m.activeSince = time.Time{}
+		m.outputMode = outputModeCommand
+		m.commandXOffset = 0
+		m.outputLines = m.actionOutputIntroLines(act)
+		if act.isAddonAction() {
+			m.appendOutput("✗ Unable to start addon action: " + err.Error())
+			m.appendAddonFailureDetails(act, err)
+		} else {
+			m.appendOutput("✗ Unable to start action: " + err.Error())
+		}
+		return
+	}
 	m.running = true
 	m.activeAction = label
 	m.activeSince = time.Now()
 	m.outputMode = outputModeCommand
 	m.commandXOffset = 0
-	m.outputLines = []string{
-		fmt.Sprintf("$ %s", strings.Join(act.command, " ")),
-		"",
-	}
+	m.outputLines = m.actionOutputIntroLines(act)
 	m.setFooter("Running "+label+"…", 4*time.Second)
 
 	go func() {
 		start := time.Now()
-		err := streamCommand(m.program, m.baseDir, act.command)
+		runDir := act.workDir
+		if strings.TrimSpace(runDir) == "" {
+			runDir = m.baseDir
+		}
+		err := streamCommand(m.program, runDir, act.command)
 		m.program.Send(commandDoneMsg{
-			action:   label,
+			act:      act,
+			label:    label,
 			duration: time.Since(start),
 			err:      err,
 		})
 	}()
 }
 
+func validateRunnableAction(act action) error {
+	if len(act.command) == 0 {
+		return errors.New("empty command")
+	}
+	if strings.TrimSpace(act.workDir) == "" {
+		return nil
+	}
+	info, err := os.Stat(act.workDir)
+	if err != nil {
+		return fmt.Errorf("working_dir %q is unavailable: %w", act.workDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("working_dir %q is not a directory", act.workDir)
+	}
+	return nil
+}
+
 func streamCommand(program *tea.Program, baseDir string, argv []string) error {
+	if program == nil {
+		return streamCommandTo(baseDir, argv, nil)
+	}
+	return streamCommandTo(baseDir, argv, func(line string) {
+		program.Send(outputLineMsg{text: line})
+	})
+}
+
+func streamCommandTo(baseDir string, argv []string, emit func(string)) error {
 	if len(argv) == 0 {
 		return errors.New("empty command")
 	}
@@ -118,6 +228,7 @@ func streamCommand(program *tea.Program, baseDir string, argv []string) error {
 	}
 
 	done := make(chan struct{}, 2)
+	var emitMu sync.Mutex
 	stream := func(r io.Reader) {
 		scanner := bufio.NewScanner(r)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -127,7 +238,11 @@ func streamCommand(program *tea.Program, baseDir string, argv []string) error {
 			if line == "" {
 				continue
 			}
-			program.Send(outputLineMsg{text: line})
+			if emit != nil {
+				emitMu.Lock()
+				emit(line)
+				emitMu.Unlock()
+			}
 		}
 		done <- struct{}{}
 	}
@@ -180,6 +295,54 @@ server_config_set "worldname" %q
 		}
 
 		return worldSetMsg{world: world.Name, startAfter: startAfter}
+	}
+}
+
+func listModConfigsCmd(baseDir string) tea.Cmd {
+	return func() tea.Msg {
+		configs, err := listModConfigOptions(baseDir)
+		return configListMsg{configs: configs, err: err}
+	}
+}
+
+func editModConfigCmd(baseDir string, config configOption) tea.Cmd {
+	editorSnippet := `
+if [[ -n "${VISUAL:-}" ]]; then
+  exec ${VISUAL} "$1"
+fi
+if [[ -n "${EDITOR:-}" ]]; then
+  exec ${EDITOR} "$1"
+fi
+for candidate in nano nvim vim vi; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    exec "$candidate" "$1"
+  fi
+done
+echo "No terminal editor found. Set \$VISUAL or \$EDITOR." >&2
+exit 127
+`
+
+	cmd := exec.Command("bash", "-lc", editorSnippet, "bash", config.Path)
+	cmd.Dir = baseDir
+	cmd.Env = os.Environ()
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return configEditDoneMsg{config: config, err: err}
+	})
+}
+
+func listInstalledModsCmd(baseDir string) tea.Cmd {
+	return func() tea.Msg {
+		mods, err := listInstalledModOptions(baseDir)
+		return modListMsg{mods: mods, err: err}
+	}
+}
+
+func saveModSelectionCmd(baseDir string, mods []modOption) tea.Cmd {
+	snapshot := append([]modOption(nil), mods...)
+	return func() tea.Msg {
+		enabledCount, changedCount, err := saveInstalledModOptions(baseDir, snapshot)
+		return modSaveMsg{enabledCount: enabledCount, changedCount: changedCount, err: err}
 	}
 }
 
@@ -254,10 +417,10 @@ printf 'temp_value=%s\n' "${temp_value:-n/a}"
 	if !online || pid == "" {
 		online = false
 		pid = ""
-		values["cpu"] = "0"
-		values["mem"] = "0"
-		values["uptime"] = "0"
-		values["players"] = "0"
+		values["cpu"] = "n/a"
+		values["mem"] = "n/a"
+		values["uptime"] = "n/a"
+		values["players"] = "n/a"
 	}
 
 	status := appStatus{
@@ -303,6 +466,300 @@ func listWorldOptions(baseDir string) ([]worldOption, error) {
 	}
 
 	return options, nil
+}
+
+func listModConfigOptions(baseDir string) ([]configOption, error) {
+	paths := map[string]struct{}{}
+	modConfigDir := filepath.Join(baseDir, "ModConfigs")
+
+	if entries, err := os.ReadDir(modConfigDir); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			paths[filepath.Join(modConfigDir, entry.Name())] = struct{}{}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	excludedDirs := map[string]struct{}{
+		"Backups":    {},
+		"Engine":     {},
+		"Logs":       {},
+		"Mods":       {},
+		"Scripts":    {},
+		"Worlds":     {},
+		"ModConfigs": {},
+	}
+	extensions := []string{".json", ".toml", ".cfg", ".ini"}
+
+	baseEntries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range baseEntries {
+		if !entry.IsDir() {
+			continue
+		}
+		if _, skip := excludedDirs[entry.Name()]; skip {
+			continue
+		}
+
+		subdir := filepath.Join(baseDir, entry.Name())
+		subEntries, err := os.ReadDir(subdir)
+		if err != nil {
+			continue
+		}
+		for _, subEntry := range subEntries {
+			if subEntry.IsDir() {
+				continue
+			}
+			ext := strings.ToLower(filepath.Ext(subEntry.Name()))
+			if !containsString(extensions, ext) {
+				continue
+			}
+			paths[filepath.Join(subdir, subEntry.Name())] = struct{}{}
+		}
+	}
+
+	sortedPaths := make([]string, 0, len(paths))
+	for path := range paths {
+		sortedPaths = append(sortedPaths, path)
+	}
+	sort.Strings(sortedPaths)
+
+	options := make([]configOption, 0, len(sortedPaths))
+	for _, path := range sortedPaths {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		relPath, err := filepath.Rel(baseDir, path)
+		if err != nil {
+			relPath = path
+		}
+		options = append(options, configOption{
+			RelPath:  filepath.ToSlash(relPath),
+			Path:     path,
+			Size:     humanSize(info.Size()),
+			Modified: info.ModTime().Format("2006-01-02 15:04"),
+		})
+	}
+
+	return options, nil
+}
+
+func listInstalledModOptions(baseDir string) ([]modOption, error) {
+	modPaths, err := filepath.Glob(filepath.Join(baseDir, "Mods", "*.tmod"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(modPaths)
+
+	enabledMods, err := readEnabledModNames(filepath.Join(baseDir, "Mods", "enabled.json"))
+	if err != nil {
+		return nil, err
+	}
+
+	options := make([]modOption, 0, len(modPaths))
+	for _, path := range modPaths {
+		name := strings.TrimSuffix(filepath.Base(path), ".tmod")
+		enabled := enabledMods[strings.ToLower(name)]
+		options = append(options, modOption{
+			Name:            name,
+			Enabled:         enabled,
+			OriginalEnabled: enabled,
+		})
+	}
+
+	return options, nil
+}
+
+func loadAddonActions(baseDir string) ([]action, []string) {
+	pattern := filepath.Join(baseDir, "Addons", "*", "addon.json")
+	manifestPaths, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, []string{fmt.Sprintf("Unable to scan addon manifests: %v", err)}
+	}
+	sort.Strings(manifestPaths)
+
+	actions := []action{}
+	warnings := []string{}
+	for _, manifestPath := range manifestPaths {
+		addonDir := filepath.Dir(manifestPath)
+
+		raw, err := os.ReadFile(manifestPath)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("Skipping addon manifest %s: %v", manifestPath, err))
+			continue
+		}
+
+		var manifest addonManifest
+		if err := json.Unmarshal(raw, &manifest); err != nil {
+			warnings = append(warnings, fmt.Sprintf("Skipping addon manifest %s: %v", manifestPath, err))
+			continue
+		}
+
+		for index, item := range manifest.Actions {
+			section := strings.TrimSpace(item.Section)
+			if section == "" {
+				section = strings.TrimSpace(manifest.Section)
+			}
+			title := strings.TrimSpace(item.Title)
+			if section == "" || title == "" || len(item.Command) == 0 {
+				warnings = append(warnings, fmt.Sprintf("Skipping action %d in %s: section, title, and command are required", index+1, manifestPath))
+				continue
+			}
+
+			command := make([]string, 0, len(item.Command))
+			for _, part := range item.Command {
+				command = append(command, expandAddonString(part, baseDir, addonDir))
+			}
+
+			workDir := strings.TrimSpace(item.WorkingDir)
+			if workDir == "" {
+				workDir = addonDir
+			} else {
+				workDir = expandAddonString(workDir, baseDir, addonDir)
+				if !filepath.IsAbs(workDir) {
+					workDir = filepath.Join(addonDir, workDir)
+				}
+			}
+
+			actions = append(actions, action{
+				category:      section,
+				title:         section + " / " + title,
+				description:   blankFallback(strings.TrimSpace(item.Description), "Run addon action."),
+				command:       command,
+				workDir:       workDir,
+				addonName:     blankFallback(strings.TrimSpace(manifest.Name), filepath.Base(addonDir)),
+				addonManifest: manifestPath,
+				confirmText:   strings.TrimSpace(item.ConfirmText),
+			})
+		}
+	}
+
+	return actions, warnings
+}
+
+func expandAddonString(value, baseDir, addonDir string) string {
+	replacer := strings.NewReplacer(
+		"${repo_dir}", baseDir,
+		"${addon_dir}", addonDir,
+	)
+	return replacer.Replace(value)
+}
+
+func readEnabledModNames(path string) (map[string]bool, error) {
+	enabled := map[string]bool{}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return enabled, nil
+		}
+		return nil, err
+	}
+
+	var names []string
+	if err := json.Unmarshal(data, &names); err == nil {
+		for _, name := range names {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			enabled[strings.ToLower(name)] = true
+		}
+		return enabled, nil
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		line = strings.Trim(line, "[],")
+		line = strings.Trim(line, "\"")
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		enabled[strings.ToLower(line)] = true
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return enabled, nil
+}
+
+func saveInstalledModOptions(baseDir string, mods []modOption) (enabledCount, changedCount int, err error) {
+	enabledJSON := filepath.Join(baseDir, "Mods", "enabled.json")
+	if err := os.MkdirAll(filepath.Dir(enabledJSON), 0o755); err != nil {
+		return 0, 0, err
+	}
+
+	names := make([]string, 0, len(mods))
+	for _, mod := range mods {
+		if mod.Enabled {
+			names = append(names, mod.Name)
+			enabledCount++
+		}
+		if mod.Enabled != mod.OriginalEnabled {
+			changedCount++
+		}
+	}
+	sort.Strings(names)
+
+	if current, readErr := os.ReadFile(enabledJSON); readErr == nil {
+		if writeErr := os.WriteFile(enabledJSON+".bak", current, 0o644); writeErr != nil {
+			return 0, 0, writeErr
+		}
+	} else if !errors.Is(readErr, os.ErrNotExist) {
+		return 0, 0, readErr
+	}
+
+	data, err := json.Marshal(names)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	tmpPath := enabledJSON + ".tmp"
+	if err := os.WriteFile(tmpPath, append(data, '\n'), 0o644); err != nil {
+		return 0, 0, err
+	}
+	if err := os.Rename(tmpPath, enabledJSON); err != nil {
+		return 0, 0, err
+	}
+
+	appendWorkshopLog(baseDir, fmt.Sprintf("Saved enabled.json (%d mods)", enabledCount))
+	return enabledCount, changedCount, nil
+}
+
+func appendWorkshopLog(baseDir, message string) {
+	appendNamedLog(baseDir, "workshop.log", "INFO", message)
+}
+
+func appendControlLog(baseDir, message, level string) {
+	appendNamedLog(baseDir, "control.log", level, message)
+}
+
+func appendNamedLog(baseDir, filename, level, message string) {
+	logPath := filepath.Join(baseDir, "Logs", filename)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return
+	}
+
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	if strings.TrimSpace(level) == "" {
+		level = "INFO"
+	}
+	_, _ = fmt.Fprintf(f, "[%s] [%s] %s\n", timestamp, level, message)
 }
 
 func parseKeyValues(raw []byte) map[string]string {
@@ -377,9 +834,30 @@ func scanConsoleLines(data []byte, atEOF bool) (advance int, token []byte, err e
 
 func cleanOutputLine(line string) string {
 	line = ansiEscapePattern.ReplaceAllString(line, "")
+	line = outputGlyphReplacer.Replace(line)
 	line = strings.ReplaceAll(line, "\r", "")
+	line = normalizeDecorativeLine(line)
 	line = strings.TrimSpace(line)
 	return line
+}
+
+func normalizeDecorativeLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return line
+	}
+	if !decorativeLinePattern.MatchString(trimmed) {
+		return line
+	}
+
+	width := len([]rune(trimmed))
+	if width < 6 {
+		return line
+	}
+	if width > 62 {
+		width = 62
+	}
+	return strings.Repeat("-", width)
 }
 
 func humanSize(size int64) string {
@@ -410,22 +888,34 @@ func blankFallback(value, fallback string) string {
 	return value
 }
 
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func formatPercent(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "not_running" {
-		return "0%"
+	if raw == "" || raw == "not_running" || strings.EqualFold(raw, "n/a") || strings.EqualFold(raw, "unknown") {
+		return "n/a"
 	}
 	raw = strings.TrimSuffix(raw, "%")
 	if !numericValuePattern.MatchString(raw) {
-		return "0%"
+		return "n/a"
 	}
 	return raw + "%"
 }
 
 func formatUptimeDuration(raw string) string {
 	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "n/a") || strings.EqualFold(raw, "unknown") {
+		return "n/a"
+	}
 	if !wholeNumberPattern.MatchString(raw) {
-		return "0s"
+		return "n/a"
 	}
 	seconds := atoi(raw)
 	if seconds <= 0 {
@@ -451,17 +941,25 @@ func formatTemperature(raw string) string {
 	if !signedNumericValuePattern.MatchString(raw) {
 		return "n/a"
 	}
-	raw = strings.TrimRight(strings.TrimRight(raw, "0"), ".")
+	if strings.Contains(raw, ".") {
+		raw = strings.TrimRight(strings.TrimRight(raw, "0"), ".")
+	}
 	return raw + "C"
 }
 
 func formatMemoryRSS(raw string) string {
 	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "n/a") || strings.EqualFold(raw, "unknown") {
+		return "n/a"
+	}
 	if !wholeNumberPattern.MatchString(raw) {
-		return "0MB"
+		return "n/a"
 	}
 	kb, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || kb <= 0 {
+	if err != nil || kb < 0 {
+		return "n/a"
+	}
+	if kb == 0 {
 		return "0MB"
 	}
 	bytes := kb * 1024
