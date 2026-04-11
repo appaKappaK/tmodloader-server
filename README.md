@@ -376,8 +376,6 @@ See [Addons/README.md](/home/matt/githubprojects/tmodloader-github/tmodloader-se
 
 Release history lives in [`CHANGELOG.md`](CHANGELOG.md).
 
-Add new user-facing changes to `Unreleased` there so the README can stay focused on setup, usage, and the self-contained layout.
-
 ## Releases
 
 No GitHub release is published yet, but the current documented state of the public portable edition is `v2.6.0`.
