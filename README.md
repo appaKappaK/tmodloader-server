@@ -24,7 +24,7 @@ This repo is meant to be its own server home. By default the engine, worlds, mod
 ## Quick Start
 
 ### 1. Install packages
-```Some of these dependencies are old and/or are only used for dev```
+```Some of these dependencies are old and/or are only used for dev, fix tdb```
 
 Debian / Ubuntu:
 
