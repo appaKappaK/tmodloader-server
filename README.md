@@ -24,20 +24,21 @@ This repo is meant to be its own server home. By default the engine, worlds, mod
 ## Quick Start
 
 ### 1. Install packages
+```Some of these dependencies are old and/or are only used for dev```
 
 Debian / Ubuntu:
 
 ```bash
-sudo apt update -y                                                       # refresh package metadata
-sudo apt install -y git screen curl jq pigz rsync unzip net-tools dos2unix htop ncdu  # core runtime and admin tools
-sudo apt install -y golang                                               # Go toolchain for make tui-run and shell-launched UI
+sudo apt update -y                                                       
+sudo apt install -y git screen curl jq pigz rsync unzip net-tools dos2unix htop ncdu  
+sudo apt install -y golang                                               
 ```
 
 Fedora:
 
 ```bash
-sudo dnf install -y git screen curl jq pigz rsync unzip net-tools dos2unix htop ncdu  # core runtime and admin tools
-sudo dnf install -y golang                                               # Go toolchain for make tui-run and shell-launched UI
+sudo dnf install -y git screen curl jq pigz rsync unzip net-tools dos2unix htop ncdu  
+sudo dnf install -y golang                                               
 ```
 
 Notes:
