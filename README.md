@@ -307,18 +307,6 @@ If that install fails, check:
 - that `Engine/` contains a valid tModLoader server install
 - that the host can reach the required download endpoints
 
-### What stays out of git
-
-`.gitignore` already excludes:
-
-- `Engine/`, `Mods/`, `Worlds/`, `ModConfigs/`, `Backups/`, `Logs/`, and `Tools/SteamCMD/`
-- `Configs/serverconfig.txt` and `Configs/workshop_map.json`
-- `Scripts/env.sh` and `Scripts/steam/mod_ids.txt`
-- `Testing/local/`, `Testing/output/`, and `Testing/tmp/`
-- `bin/`, `tmodloader-ui`, `cmd/tmodloader-ui/tmodloader-ui`, `coverage.out`, `*.coverprofile`, `*.test`, `*.prof`, and `*.pprof`
-
-That keeps the public repo clean while still letting the project behave like a complete local server workspace.
-
 ## Addons
 
 The Go control room can load extra sections and actions from addon manifests in `Addons/<addon-name>/addon.json`.
