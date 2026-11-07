@@ -1,11 +1,12 @@
 # tmodloader-server
 
+![AI-assisted development](https://img.shields.io/badge/development-AI--assisted-1f3a5f?style=flat-square)
 ![CI](https://github.com/appaKappaK/tmodloader-server/actions/workflows/ci.yml/badge.svg)
 ![Version](https://img.shields.io/badge/version-2.6.0-blue)
 ![tModLoader](https://img.shields.io/badge/tModLoader-2024.5+-blue)
 ![License](https://img.shields.io/badge/license-Apache--2.0-brightgreen)
 ![Platform](https://img.shields.io/badge/platform-Linux-orange)
-![Portable](https://img.shields.io/badge/layout-portable-success)
+
 
 Portable Linux toolkit for running and managing a tModLoader dedicated server.
 
